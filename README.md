@@ -17,15 +17,43 @@ AutoHotkey, PowerToys, .NET / Node.js 런타임 없이 단일 네이티브 `.exe
 
 ## 빌드
 
+이 프로젝트는 **x64 / aarch64 두 타겟을 모두** 빌드 대상으로 한다.
+`.cargo/config.toml` 의 `build.target` 에 두 타겟이 배열로 지정되어 있어(Cargo 1.64+),
+`cargo build` 한 번이면 두 타겟의 exe 가 모두 생성된다.
+
 ```powershell
-# 디버그 빌드 (콘솔 창 유지 + 로그 출력)
+# 디버그 빌드 (콘솔 창 유지 + 로그 출력) — 두 타겟 모두 빌드
 cargo build
 
-# 릴리스 빌드 (콘솔 창 없음, 최적화)
+# 릴리스 빌드 (콘솔 창 없음, 최적화) — 두 타겟 모두 빌드
 cargo build --release
 ```
 
-산출물: `target\release\caps-hangul.exe`
+산출물은 **아키텍처별 폴더**로 나뉜다. (타겟을 명시하면 경로가 `target\release\` 가 아니라
+`target\<아키텍처>-pc-windows-msvc\release\` 로 바뀐다.)
+
+- x64: `target\x86_64-pc-windows-msvc\release\caps-hangul.exe`
+- aarch64: `target\aarch64-pc-windows-msvc\release\caps-hangul.exe`
+
+### 선행 조건
+
+두 타겟이 항상 빌드되므로 두 툴체인 타겟이 모두 설치돼 있어야 한다.
+설치돼 있지 않으면 `cargo build` 가 실패하므로, clone 직후 한 번 실행한다.
+
+```powershell
+rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+```
+
+> aarch64 cross-link 에는 Visual Studio 의 **"MSVC v143 - ARM64 빌드 도구"** 컴포넌트가 필요하다.
+
+### 한쪽 타겟만 빌드
+
+특정 타겟만 빠르게 빌드하려면 alias 를 사용한다(`--release` 등 옵션을 뒤에 붙일 수 있다).
+
+```powershell
+cargo build-x64 --release      # x86_64 만
+cargo build-aarch64 --release  # aarch64 만
+```
 
 ## 테스트
 
