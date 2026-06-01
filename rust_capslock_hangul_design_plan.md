@@ -41,7 +41,7 @@
 
 사용자가 Caps Lock 키를 짧게 눌렀다 떼면 프로그램은 Windows 한/영 전환 입력을 발생시켜야 한다.
 
-- 기본 기준 시간: `250ms` 미만
+- 기본 기준 시간: `400ms` 미만
 - 기본 전송 키: `VK_HANGUL` / `VK_KANA` 계열 가상 키 코드 `0x15`
 - 원래 Caps Lock 입력은 OS 및 애플리케이션으로 전달되지 않아야 한다.
 
@@ -49,7 +49,7 @@
 
 사용자가 Caps Lock 키를 일정 시간 이상 누른 뒤 떼면 프로그램은 Caps Lock 토글 입력을 발생시켜야 한다.
 
-- 기본 기준 시간: `250ms` 이상
+- 기본 기준 시간: `400ms` 이상
 - 기본 전송 키: `VK_CAPITAL` 가상 키 코드 `0x14`
 - 사용자는 기존 Caps Lock 키처럼 대문자 잠금 상태를 켜거나 끌 수 있어야 한다.
 
@@ -355,7 +355,7 @@ if INJECTING == true:
 초기 버전에서는 설정 파일 없이 다음 값을 코드 상수로 둔다.
 
 ```text
-LONG_PRESS_THRESHOLD_MS = 250
+LONG_PRESS_THRESHOLD_MS = 400
 SHORT_PRESS_ACTION = VK_HANGUL
 LONG_PRESS_ACTION = VK_CAPITAL
 ```
@@ -371,7 +371,7 @@ caps-hangul.toml
 예시:
 
 ```toml
-long_press_threshold_ms = 250
+long_press_threshold_ms = 400
 short_press_vk = "VK_HANGUL"
 long_press_vk = "VK_CAPITAL"
 start_minimized = true
@@ -583,9 +583,9 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 예시 테스트 케이스:
 
 ```text
-elapsed = 100ms, threshold = 250ms -> ShortPress
-elapsed = 250ms, threshold = 250ms -> LongPress
-elapsed = 500ms, threshold = 250ms -> LongPress
+elapsed = 100ms, threshold = 400ms -> ShortPress
+elapsed = 400ms, threshold = 400ms -> LongPress
+elapsed = 500ms, threshold = 400ms -> LongPress
 ```
 
 ### 15.2 수동 기능 테스트
@@ -603,7 +603,7 @@ And Caps Lock LED 또는 Caps Lock 상태는 바뀌지 않아야 함
 
 ```text
 Given 프로그램이 실행 중임
-When Caps Lock을 250ms 이상 누른 뒤 뗌
+When Caps Lock을 400ms 이상 누른 뒤 뗌
 Then Caps Lock 상태가 토글되어야 함
 And 한/영 입력 상태는 바뀌지 않아야 함
 ```
@@ -766,7 +766,7 @@ Language: Rust stable
 Crate: windows-sys
 Subsystem: windows
 Hook: WH_KEYBOARD_LL
-Short press threshold: 250ms
+Short press threshold: 400ms
 Short press action: VK_HANGUL(0x15)
 Long press action: VK_CAPITAL(0x14)
 Single instance: Local named mutex

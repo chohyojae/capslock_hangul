@@ -5,8 +5,8 @@
 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_CAPITAL, VK_HANGUL};
 
-/// 짧게 누름 / 길게 누름을 가르는 기준 시간 (ms). §18: 250ms.
-pub const LONG_PRESS_THRESHOLD_MS: u64 = 250;
+/// 짧게 누름 / 길게 누름을 가르는 기준 시간 (ms). §18: 400ms.
+pub const LONG_PRESS_THRESHOLD_MS: u64 = 400;
 
 /// 런타임 설정값.
 #[derive(Clone, Copy, Debug)]
@@ -56,16 +56,16 @@ mod tests {
     // §15.1 예시 테스트 케이스.
     #[test]
     fn elapsed_below_threshold_is_short() {
-        assert_eq!(classify_press(100, 250), PressKind::Short);
+        assert_eq!(classify_press(100, 400), PressKind::Short);
     }
 
     #[test]
     fn elapsed_at_threshold_is_long() {
-        assert_eq!(classify_press(250, 250), PressKind::Long);
+        assert_eq!(classify_press(400, 400), PressKind::Long);
     }
 
     #[test]
     fn elapsed_above_threshold_is_long() {
-        assert_eq!(classify_press(500, 250), PressKind::Long);
+        assert_eq!(classify_press(500, 400), PressKind::Long);
     }
 }

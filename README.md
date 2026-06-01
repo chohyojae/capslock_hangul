@@ -3,7 +3,7 @@
 Windows 환경에서 macOS 의 Caps Lock 동작과 유사하게 동작하는 경량 Rust 유틸리티.
 
 - **Caps Lock 짧게 누름** → 한/영 전환 (`VK_HANGUL`, 0x15)
-- **Caps Lock 길게 누름** (기본 250ms 이상) → Caps Lock 대/소문자 토글 (`VK_CAPITAL`, 0x14)
+- **Caps Lock 길게 누름** (기본 400ms 이상) → Caps Lock 대/소문자 토글 (`VK_CAPITAL`, 0x14)
 - **전환 시 화면 중앙 안내 HUD** → macOS 처럼 한/영 전환 시 `한`/`A`, Caps Lock 토글 시
   `CAPS ON`/`CAPS OFF` 가 활성 모니터 가운데에 잠깐 떴다 사라진다 (HiDPI 대응)
 
@@ -72,10 +72,10 @@ cargo test
 | 동작 | 결과 |
 | --- | --- |
 | Caps Lock 짧게 누름 | 한/영 전환 |
-| Caps Lock 길게 누름 (≥250ms) | Caps Lock 토글 |
+| Caps Lock 길게 누름 (≥400ms) | Caps Lock 토글 |
 | 그 외 모든 키 | 기존 동작 그대로 |
 
-> 길게 누름(Caps Lock 토글)은 **임계 시간(250ms)을 넘기는 순간** 동작·안내가 뜨며,
+> 길게 누름(Caps Lock 토글)은 **임계 시간(400ms)을 넘기는 순간** 동작·안내가 뜨며,
 > 그 이후 키를 언제 떼는지와 무관하다.
 
 ## 전환 안내 HUD
