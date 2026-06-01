@@ -5,6 +5,9 @@
 use std::ptr;
 
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
+use windows_sys::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, TranslateMessage, MSG,
 };
@@ -14,6 +17,18 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 pub fn now_ms() -> u64 {
     // SAFETY: GetTickCount64 는 인자가 없고 단순히 u64 를 반환한다.
     unsafe { GetTickCount64() }
+}
+
+/// 프로세스를 Per-Monitor-V2 DPI 인식으로 설정한다.
+///
+/// HUD 오버레이를 HiDPI 모니터에서 비트맵 확대(흐릿함) 없이 또렷하게 그리기 위함이다.
+/// 어떤 창도 만들기 전에(메인 진입 직후) 호출해야 한다. Win10 1703 미만에서는
+/// 함수 호출이 실패할 수 있으나 무시한다(시스템 DPI 인식으로 동작).
+pub fn set_dpi_aware() {
+    // SAFETY: 인자는 상수 컨텍스트 핸들이며, 반환값(성공 여부)은 무시한다.
+    unsafe {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
 }
 
 /// 표준 Win32 메시지 루프 (§5.1, §10.2).

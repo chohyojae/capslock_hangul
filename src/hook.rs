@@ -6,14 +6,14 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use windows_sys::Win32::Foundation::{GetLastError, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_CAPITAL;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_CAPITAL, VK_HANGUL};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, KBDLLHOOKSTRUCT,
     LLKHF_INJECTED, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 use crate::config::{classify_press, PressKind};
-use crate::{input, state, win32};
+use crate::{input, overlay, state, win32};
 
 /// 설치된 훅 핸들. 종료 시 해제하기 위해 전역에 보관한다.
 static HOOK_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -80,26 +80,52 @@ unsafe extern "system" fn low_level_keyboard_proc(
     }
 
     match wparam as u32 {
-        // KeyDown: 최초 눌림 시각만 기록하고 원래 입력을 차단(§6.1, §6.2).
+        // KeyDown: 최초 눌림 시각 기록 + 임계 시간 타이머 무장, 원래 입력 차단(§6.1, §6.2).
         WM_KEYDOWN | WM_SYSKEYDOWN => {
             if !state::CAPS_DOWN.swap(true, Ordering::SeqCst) {
                 state::CAPS_DOWN_TIME_MS.store(win32::now_ms(), Ordering::SeqCst);
+                state::LONG_FIRED.store(false, Ordering::SeqCst);
+                // 누른 채 임계 시간을 넘기면 떼기 전에 길게 누름(Caps 토글+오버레이)을 확정한다.
+                let threshold = state::THRESHOLD_MS.load(Ordering::SeqCst);
+                overlay::arm_caps_long_press(threshold as u32);
             }
             1 // non-zero: 원래 Caps Lock KeyDown 차단
         }
-        // KeyUp: elapsed 계산 후 짧게/길게에 따라 합성 입력 전송, 원래 입력 차단.
+        // KeyUp: 길게 누름이 타이머에서 이미 처리됐으면 무시. 아니면 짧게/길게 판정.
         WM_KEYUP | WM_SYSKEYUP => {
             let down_time = state::CAPS_DOWN_TIME_MS.load(Ordering::SeqCst);
             state::CAPS_DOWN.store(false, Ordering::SeqCst);
+            overlay::cancel_caps_long_press();
+
+            // 임계 시간 타이머에서 길게 누름을 이미 확정·실행했으면 떼는 시점엔 아무 동작 안 함.
+            if state::LONG_FIRED.swap(false, Ordering::SeqCst) {
+                return 1;
+            }
 
             let elapsed = win32::now_ms().saturating_sub(down_time);
             let threshold = state::THRESHOLD_MS.load(Ordering::SeqCst);
 
-            let vk_to_send = match classify_press(elapsed, threshold) {
-                PressKind::Long => state::LONG_PRESS_VK.load(Ordering::SeqCst),
-                PressKind::Short => state::SHORT_PRESS_VK.load(Ordering::SeqCst),
-            };
-            input::send_key(vk_to_send);
+            match classify_press(elapsed, threshold) {
+                PressKind::Long => {
+                    // 타이머가 뜨기 직전에 떼서 임계 경계에 걸린 경우(또는 오버레이 미준비).
+                    let vk = state::LONG_PRESS_VK.load(Ordering::SeqCst);
+                    input::send_key(vk);
+                    if vk == VK_CAPITAL {
+                        overlay::notify_caps();
+                    }
+                }
+                PressKind::Short => {
+                    // 한/영(VK_HANGUL)일 때는 오버레이 핸들러가 (실제 IME 조회 → 키 전송 →
+                    // 표시) 순서로 처리하도록 위임한다. 그래야 라벨이 실제 상태와 일치한다.
+                    // 오버레이 미준비/커스텀 키일 때는 콜백에서 직접 전송(폴백).
+                    let vk = state::SHORT_PRESS_VK.load(Ordering::SeqCst);
+                    if vk == VK_HANGUL && overlay::is_ready() {
+                        overlay::request_language_toggle();
+                    } else {
+                        input::send_key(vk);
+                    }
+                }
+            }
 
             1 // non-zero: 원래 Caps Lock KeyUp 차단
         }

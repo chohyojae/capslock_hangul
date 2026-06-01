@@ -19,6 +19,9 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_SystemInformation",  # GetTickCount64
   "Win32_System_LibraryLoader",  # GetModuleHandleW
   "Win32_Security",              # SECURITY_ATTRIBUTES (CreateMutexW)
+  "Win32_Graphics_Gdi",          # HUD 오버레이 렌더링 (폰트, 브러시, 둥근 사각형, 모니터)
+  "Win32_UI_HiDpi",              # Per-Monitor DPI 인식 + 모니터 DPI 조회
+  "Win32_UI_Input_Ime",          # 실제 한/영 IME 변환 모드 조회
 ] }
 
 [profile.release]

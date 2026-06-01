@@ -6,6 +6,7 @@ mod config;
 mod hook;
 mod input;
 mod logging;
+mod overlay;
 mod single_instance;
 mod state;
 mod win32;
@@ -22,6 +23,9 @@ use single_instance::SingleInstance;
 /// 4. 메시지 루프 실행
 /// 5. 종료 시 훅 해제 (Drop)
 fn main() {
+    // 0. HiDPI 인식 설정 (오버레이를 또렷하게 렌더링하기 위해 창 생성 전에 호출).
+    win32::set_dpi_aware();
+
     // 1. 중복 실행 방지 (§11)
     let _instance = match SingleInstance::acquire() {
         Ok(Some(instance)) => instance,
@@ -47,6 +51,11 @@ fn main() {
             return;
         }
     };
+
+    // 3-1. 전환 안내 HUD 오버레이 준비(실패해도 치명적이지 않음 — HUD 없이 동작).
+    if let Err(code) = overlay::init() {
+        logging::log(&format!("오버레이 초기화 실패: error {code} (HUD 없이 계속 실행)"));
+    }
 
     logging::log("caps-hangul-rs 실행 중. 종료하려면 프로세스를 종료하세요.");
 

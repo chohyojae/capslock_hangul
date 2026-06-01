@@ -16,6 +16,11 @@ pub static CAPS_DOWN_TIME_MS: AtomicU64 = AtomicU64::new(0);
 /// SendInput 으로 합성 입력을 보내는 중인지 여부 (§7.2, §8.4 재진입 방지 보조).
 pub static INJECTING: AtomicBool = AtomicBool::new(false);
 
+/// 길게 누름(Caps Lock 토글)이 임계 시간 타이머에서 이미 확정·실행됐는지 여부.
+/// 떼기 전에 임계 시간을 넘기면 타이머가 동작을 실행하고 이 값을 true 로 둔다.
+/// KeyUp 은 이 값을 확인·리셋하여 중복 실행을 막는다.
+pub static LONG_FIRED: AtomicBool = AtomicBool::new(false);
+
 /// 길게 누름 판정 기준 시간 (ms). `init` 에서 설정값으로 갱신한다.
 pub static THRESHOLD_MS: AtomicU64 = AtomicU64::new(crate::config::LONG_PRESS_THRESHOLD_MS);
 
