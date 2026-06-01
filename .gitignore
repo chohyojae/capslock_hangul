@@ -1,0 +1,15 @@
+# Rust 빌드 산출물
+/target
+
+# Cargo 잠금 파일은 바이너리 크레이트이므로 커밋을 권장하나,
+# 필요 시 아래 주석을 해제하여 무시할 수 있다.
+# Cargo.lock
+
+# IDE / 편집기
+.vscode/
+.idea/
+*.swp
+
+# Windows
+Thumbs.db
+desktop.ini

@@ -1,0 +1,5 @@
+# 회사 네트워크(SSL inspection 프록시) 환경에서 crates.io 다운로드 시
+# 인증서 파기 검사(CRYPT_E_NO_REVOCATION_CHECK)로 실패하는 것을 우회한다.
+# 일반 네트워크 환경에서 빌드한다면 이 파일을 삭제해도 무방하다.
+[http]
+check-revoke = false

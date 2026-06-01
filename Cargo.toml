@@ -1,0 +1,29 @@
+[package]
+name = "caps-hangul-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Windows Caps Lock 한/영 전환 유틸리티 (짧게 누름: 한/영, 길게 누름: Caps Lock)"
+license = "MIT"
+
+# 배포 산출물 이름은 설계 문서(§13.4)의 caps-hangul.exe 에 맞춘다.
+[[bin]]
+name = "caps-hangul"
+path = "src/main.rs"
+
+[dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_Threading",
+  "Win32_System_SystemInformation",  # GetTickCount64
+  "Win32_System_LibraryLoader",  # GetModuleHandleW
+  "Win32_Security",              # SECURITY_ATTRIBUTES (CreateMutexW)
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
