@@ -33,13 +33,12 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
-use windows_sys::Win32::UI::Input::Ime::{ImmGetDefaultIMEWnd, IME_CMODE_NATIVE};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, GetForegroundWindow, KillTimer,
-    PostMessageW, RegisterClassW, SendMessageTimeoutW, SetLayeredWindowAttributes, SetTimer,
-    SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SW_HIDE,
-    SW_SHOWNOACTIVATE, WM_APP, WM_IME_CONTROL, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+    PostMessageW, RegisterClassW, SetLayeredWindowAttributes, SetTimer,
+    SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SW_HIDE,
+    SW_SHOWNOACTIVATE, WM_APP, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
@@ -65,9 +64,6 @@ const HOLD_MS: u32 = 750; // 완전 표시 유지 시간
 const FADE_STEP_MS: u32 = 20; // 페이드 틱 간격
 const FADE_DEC: i32 = 22; // 틱당 알파 감소량
 const BASE_ALPHA: u8 = 235; // 표시 시 기본 알파(0~255)
-const IME_QUERY_TIMEOUT_MS: u32 = 60; // IME 창 SendMessage 타임아웃(헝 방지; 토글 지연 최소화)
-
-const IMC_GETCONVERSIONMODE: WPARAM = 0x0001; // WM_IME_CONTROL 의 wParam
 
 // ── 전역 상태 (메인 스레드 전용이지만 콜백 공유 위해 atomic 사용) ─────────────
 static OVERLAY_HWND: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -306,38 +302,11 @@ unsafe fn show_label(hwnd: *mut c_void, label: u32) {
     SetTimer(hwnd, TIMER_HOLD, HOLD_MS, None);
 }
 
-/// 실제 IME 한/영 변환 모드를 조회한다. Some(true)=한글, Some(false)=영문,
-/// None=판단 불가(한국어 IME 없음/조회 실패). 포그라운드 창의 기본 IME 창에
-/// `WM_IME_CONTROL` 을 보내 cross-process 로 안전하게 읽는다.
-unsafe fn query_ime_hangul(hwnd_self: *mut c_void) -> Option<bool> {
-    let fg = GetForegroundWindow();
-    if fg.is_null() || fg == hwnd_self {
-        return None;
-    }
-    let ime = ImmGetDefaultIMEWnd(fg);
-    if ime.is_null() {
-        return None;
-    }
-    let mut result: usize = 0;
-    let ok = SendMessageTimeoutW(
-        ime,
-        WM_IME_CONTROL,
-        IMC_GETCONVERSIONMODE,
-        0,
-        SMTO_ABORTIFHUNG,
-        IME_QUERY_TIMEOUT_MS,
-        &mut result,
-    );
-    if ok == 0 {
-        return None; // 타임아웃/실패.
-    }
-    Some((result as u32 & IME_CMODE_NATIVE) != 0)
-}
-
 /// WM_APP_LANG: 실제 IME 상태를 **먼저 확인한 뒤** 토글하고 올바른 라벨로 표시한다.
 unsafe fn handle_language_toggle(hwnd: *mut c_void) {
-    // 1) 토글 직전 실제 IME 상태(아직 키를 주입하지 않았으므로 신뢰 가능).
-    let pre = query_ime_hangul(hwnd);
+    // 1) 토글 직전 실제 한/영 상태를 포커스 스레드 주입 리더로 조회(아직 키 미주입 → 신뢰 가능).
+    //    Teams 등 TSF/Chromium 앱 포함 정확. 주입 불가/미초기화 시 None → 추정값 폴백.
+    let pre = crate::ime::read_focus_conversion();
 
     // 2) 한/영 토글 키 주입(핵심 동작).
     input::send_key(state::SHORT_PRESS_VK.load(Ordering::SeqCst));

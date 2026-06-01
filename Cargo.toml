@@ -5,6 +5,11 @@ edition = "2021"
 description = "Windows Caps Lock 한/영 전환 유틸리티 (짧게 누름: 한/영, 길게 누름: Caps Lock)"
 license = "MIT"
 
+# 주입용 TSF 리더 DLL(crates/caps-hangul-tsf)을 함께 빌드한다.
+# 본체 exe 와 같은 출력 폴더(target/<profile>)에 .dll 이 떨어지며, 배포 시 exe 옆에 동봉한다.
+[workspace]
+members = ["crates/caps-hangul-tsf"]
+
 # 배포 산출물 이름은 설계 문서(§13.4)의 caps-hangul.exe 에 맞춘다.
 [[bin]]
 name = "caps-hangul"
@@ -21,7 +26,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_Security",              # SECURITY_ATTRIBUTES (CreateMutexW)
   "Win32_Graphics_Gdi",          # HUD 오버레이 렌더링 (폰트, 브러시, 둥근 사각형, 모니터)
   "Win32_UI_HiDpi",              # Per-Monitor DPI 인식 + 모니터 DPI 조회
-  "Win32_UI_Input_Ime",          # 실제 한/영 IME 변환 모드 조회
+  "Win32_System_Memory",         # named shared memory (주입 DLL 과의 IPC 채널)
 ] }
 
 # 스파이크(examples/tsf_spike.rs) 전용 의존성. 평소엔 주석 처리하여 본체 빌드에서 제외한다.
@@ -39,5 +44,9 @@ windows-sys = { version = "0.61", features = [
 opt-level = "z"
 lto = true
 codegen-units = 1
-panic = "abort"
+# panic = "abort" 는 의도적으로 빼 둔다.
+# 주입 DLL(crates/caps-hangul-tsf)이 Teams 등 *남의 프로세스* 안에서 실행되므로,
+# 그 안의 패닉은 catch_unwind 로 잡아 호스트 프로세스를 죽이지 않아야 한다.
+# panic="abort" 면 catch_unwind 가 무력화되어(즉시 abort) 호스트가 함께 종료된다.
+# (workspace profile 은 전 멤버에 적용되어 DLL 만 따로 unwind 로 둘 수 없다.)
 strip = true

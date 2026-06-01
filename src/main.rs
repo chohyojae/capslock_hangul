@@ -4,6 +4,7 @@
 
 mod config;
 mod hook;
+mod ime;
 mod input;
 mod logging;
 mod overlay;
@@ -57,10 +58,17 @@ fn main() {
         logging::log(&format!("오버레이 초기화 실패: error {code} (HUD 없이 계속 실행)"));
     }
 
+    // 3-2. IME 한/영 상태 리더 준비(주입 DLL). 실패해도 치명적이지 않으며(추정값 폴백),
+    //      Teams 등 TSF/Chromium 앱에서 실제 한/영 상태를 정확히 읽기 위해 쓴다.
+    if !ime::init() {
+        logging::log("IME 리더 초기화 실패 (한/영 라벨은 추정값 폴백으로 동작)");
+    }
+
     logging::log("caps-hangul-rs 실행 중. 종료하려면 프로세스를 종료하세요.");
 
     // 4. 메시지 루프 (§10.2) — idle 상태에서 CPU 사용률은 사실상 0%.
     win32::run_message_loop();
 
-    // 5. _hook / _instance 의 Drop 으로 훅 해제 및 mutex 정리 (§10.3)
+    // 5. 정리: IME 리더 자원 해제 + _hook / _instance 의 Drop 으로 훅/뮤텍스 정리 (§10.3)
+    ime::shutdown();
 }

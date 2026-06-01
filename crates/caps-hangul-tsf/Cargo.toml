@@ -1,0 +1,26 @@
+[package]
+name = "caps-hangul-tsf"
+version = "0.1.0"
+edition = "2021"
+description = "포커스 스레드에 주입돼 in-process 로 IME 한/영 변환 모드를 읽는 TSF 리더 DLL"
+license = "MIT"
+
+# WH_GETMESSAGE 훅으로 대상(포커스) 프로세스에 주입되는 DLL.
+# 산출물 이름은 빌드 후 아키텍처 접미사로 리네이밍해 배포한다:
+#   caps_hangul_tsf.dll → caps-hangul-tsf-x64.dll / caps-hangul-tsf-arm64.dll
+[lib]
+name = "caps_hangul_tsf"
+crate-type = ["cdylib"]
+
+[dependencies]
+# COM/TSF 를 다루므로 본체(windows-sys)와 달리 상위 래퍼 crate(windows)를 쓴다.
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+  "Win32_System_Memory",
+  "Win32_System_Threading",
+  "Win32_UI_TextServices",
+  "Win32_UI_WindowsAndMessaging",
+] }
