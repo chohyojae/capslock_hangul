@@ -24,6 +24,17 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_Input_Ime",          # 실제 한/영 IME 변환 모드 조회
 ] }
 
+# 스파이크(examples/tsf_spike.rs) 전용 의존성. 평소엔 주석 처리하여 본체 빌드에서 제외한다.
+# 스파이크를 빌드/실행하려면 아래 블록의 주석을 해제: `cargo run --example tsf_spike`
+# [dev-dependencies]
+# windows = { version = "0.61", features = [
+#   "Win32_Foundation",
+#   "Win32_System_Com",
+#   "Win32_System_Threading",
+#   "Win32_UI_WindowsAndMessaging",
+#   "Win32_UI_TextServices",
+# ] }
+
 [profile.release]
 opt-level = "z"
 lto = true
