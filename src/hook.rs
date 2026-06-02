@@ -82,6 +82,11 @@ unsafe extern "system" fn low_level_keyboard_proc(
     match wparam as u32 {
         // KeyDown: 최초 눌림 시각 기록 + 임계 시간 타이머 무장, 원래 입력 차단(§6.1, §6.2).
         WM_KEYDOWN | WM_SYSKEYDOWN => {
+            // 최초 눌림에서만 시각 기록 + 타이머 무장한다. CAPS_DOWN 이 이미 true 인
+            // KeyDown 은 auto-repeat(누른 채 유지)이므로 무시한다 — Caps Lock 도 길게 누르면
+            // 반복 KeyDown 이 온다. 이를 무시하지 않으면 (1) 반복마다 타이머가 다시 무장돼
+            // 길게 누름이 영영 확정되지 않거나, (2) 타이머 발화 후 도착한 반복이 LONG_FIRED 를
+            // 리셋해 떼는 시점에 짧게 누름(한/영)으로 잘못 처리된다.
             if !state::CAPS_DOWN.swap(true, Ordering::SeqCst) {
                 state::CAPS_DOWN_TIME_MS.store(win32::now_ms(), Ordering::SeqCst);
                 state::LONG_FIRED.store(false, Ordering::SeqCst);
@@ -91,7 +96,8 @@ unsafe extern "system" fn low_level_keyboard_proc(
             }
             1 // non-zero: 원래 Caps Lock KeyDown 차단
         }
-        // KeyUp: 길게 누름이 타이머에서 이미 처리됐으면 무시. 아니면 짧게/길게 판정.
+        // KeyUp: 길게 누름이 타이머에서 이미 처리됐으면 무시. 아니면 짧게 누름으로 처리
+        // (오버레이 준비 시 길게 누름은 타이머 전담). 오버레이 미준비 시에만 경과시간 폴백.
         WM_KEYUP | WM_SYSKEYUP => {
             let down_time = state::CAPS_DOWN_TIME_MS.load(Ordering::SeqCst);
             state::CAPS_DOWN.store(false, Ordering::SeqCst);
@@ -102,21 +108,25 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 return 1;
             }
 
-            let elapsed = win32::now_ms().saturating_sub(down_time);
-            let threshold = state::THRESHOLD_MS.load(Ordering::SeqCst);
+            // 길게 누름은 (오버레이 준비 시) 임계 타이머가 전담한다. 여기까지 왔다는 건
+            // 타이머가 길게 누름을 확정하지 않았다는 뜻 = 임계 시간 전에 뗐다는 의미이므로
+            // 짧게 누름으로 처리한다. 이렇게 하면 빠른 연타 중 놓친 KeyUp 으로 down_time 이
+            // 옛 값에 고정돼도(경과시간이 부풀어도) 길게 누름으로 오판하지 않는다.
+            // 오버레이 미준비(타이머 없음)일 때만 경과시간으로 길게/짧게 판정한다(폴백).
+            let kind = if overlay::is_ready() {
+                PressKind::Short
+            } else {
+                let elapsed = win32::now_ms().saturating_sub(down_time);
+                let threshold = state::THRESHOLD_MS.load(Ordering::SeqCst);
+                classify_press(elapsed, threshold)
+            };
 
-            match classify_press(elapsed, threshold) {
+            match kind {
                 PressKind::Long => {
-                    // 타이머가 뜨기 직전에 떼서 임계 경계에 걸린 경우(또는 오버레이 미준비).
-                    // Caps 는 오버레이 핸들러가 (실제 상태 조회 → VK_CAPITAL 전송 → 표시) 를
-                    // 일관되게 처리하도록 위임한다(라벨이 실제 상태와 어긋나지 않게).
-                    // 오버레이 미준비/커스텀 키일 때는 콜백에서 직접 전송(폴백).
+                    // 오버레이 미준비/커스텀 키 폴백: 콜백에서 직접 전송한다.
+                    // (오버레이 준비 시 Caps 길게 누름은 위 타이머 경로가 처리한다.)
                     let vk = state::LONG_PRESS_VK.load(Ordering::SeqCst);
-                    if vk == VK_CAPITAL && overlay::is_ready() {
-                        overlay::notify_caps();
-                    } else {
-                        input::send_key(vk);
-                    }
+                    input::send_key(vk);
                 }
                 PressKind::Short => {
                     // 한/영(VK_HANGUL)일 때는 오버레이 핸들러가 (실제 IME 조회 → 키 전송 →

@@ -7,7 +7,11 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 
 use crate::config::Config;
 
-/// Caps Lock 키가 물리적으로 눌린 상태인지 여부 (§7.2). 키 반복 입력 방지에 사용.
+/// Caps Lock 키가 (우리 훅 추적상) 눌려 있는지 여부 (§7.2). KeyDown 에서 true,
+/// KeyUp 에서 false 로 둔다. 두 가지 용도:
+/// 1) auto-repeat KeyDown 억제 — 이미 true 면 반복 입력으로 보고 무시.
+/// 2) 임계 타이머 발화 시 "지금도 눌려 있는지" 판정. 물리 키를 훅이 차단하므로 OS 키 상태
+///    API(GetAsyncKeyState/GetKeyState)로는 알 수 없어, 이 추적값이 유일한 근거다.
 pub static CAPS_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// Caps Lock KeyDown 이 처음 감지된 시각 (GetTickCount64 기준 ms) (§7.2, §7.3).

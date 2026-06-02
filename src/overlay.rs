@@ -201,29 +201,6 @@ pub fn cancel_caps_long_press() {
     }
 }
 
-/// Caps Lock 길게 누름을 처리한다(**훅 콜백에서 호출**, 오버레이 준비 시에만).
-///
-/// 한/영과 같은 "확인 후 표시": `VK_CAPITAL` 전송 **직전에** 실제 토글 상태를 읽어,
-/// 전송 후 상태(= 그 부정)로 라벨을 한 번에 띄운다. 매번 실제값을 새로 읽으므로
-/// 외부 변경(UIPI 로 주입 무시, 화면 키보드, 원격 세션 등)이 있어도 누적 어긋남이 없다.
-pub fn notify_caps() {
-    let hwnd = OVERLAY_HWND.load(Ordering::SeqCst);
-    if hwnd.is_null() {
-        // 방어적 폴백: 오버레이가 없으면 토글만 수행(표시는 생략).
-        input::send_key(VK_CAPITAL);
-        return;
-    }
-    // 전송 직전 실제 상태를 읽어 결과 상태를 확정한 뒤 토글 키를 보낸다.
-    let next_on = !caps_lock_on();
-    input::send_key(VK_CAPITAL);
-    CAPS_ON.store(next_on, Ordering::SeqCst);
-    let label = if next_on { LBL_CAPS_ON } else { LBL_CAPS_OFF };
-    // SAFETY: 유효한 창. PostMessage 는 콜백에서 안전.
-    unsafe {
-        PostMessageW(hwnd, WM_APP_SHOW, label as WPARAM, 0);
-    }
-}
-
 /// COLORREF(0x00BBGGRR) 생성.
 #[inline]
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
@@ -424,17 +401,25 @@ unsafe extern "system" fn wnd_proc(
                 TIMER_CAPS => {
                     // 누른 채 임계 시간 도달 → 떼기 전에 길게 누름(Caps 토글)을 확정.
                     KillTimer(hwnd, TIMER_CAPS);
-                    state::LONG_FIRED.store(true, Ordering::SeqCst);
-                    let vk = state::LONG_PRESS_VK.load(Ordering::SeqCst);
-                    if vk == VK_CAPITAL {
-                        // 전송 직전 실제 토글 상태를 읽어, 전송 후 상태(=부정)로 라벨 결정.
-                        let next_on = !caps_lock_on();
-                        input::send_key(vk);
-                        CAPS_ON.store(next_on, Ordering::SeqCst);
-                        show_label(hwnd, if next_on { LBL_CAPS_ON } else { LBL_CAPS_OFF });
-                    } else {
-                        input::send_key(vk);
+                    // 우리 훅이 물리 Caps 입력을 차단하므로 OS 의 키 down 상태
+                    // (GetAsyncKeyState/GetKeyState)는 Caps 를 절대 "눌림"으로 보지 않는다.
+                    // 따라서 "지금도 눌려 있는지"는 우리 자신의 추적(CAPS_DOWN)으로만 판정한다.
+                    // KeyUp 이 이미 처리됐다면 CAPS_DOWN=false → 토글하지 않는다(KillTimer 가
+                    // 이미 게시된 WM_TIMER 를 제거 못 해 뒤늦게 도착한 스테일 발화를 거른다).
+                    if state::CAPS_DOWN.load(Ordering::SeqCst) {
+                        state::LONG_FIRED.store(true, Ordering::SeqCst);
+                        let vk = state::LONG_PRESS_VK.load(Ordering::SeqCst);
+                        if vk == VK_CAPITAL {
+                            // 전송 직전 실제 토글 상태를 읽어, 전송 후 상태(=부정)로 라벨 결정.
+                            let next_on = !caps_lock_on();
+                            input::send_key(vk);
+                            CAPS_ON.store(next_on, Ordering::SeqCst);
+                            show_label(hwnd, if next_on { LBL_CAPS_ON } else { LBL_CAPS_OFF });
+                        } else {
+                            input::send_key(vk);
+                        }
                     }
+                    // else: KeyUp 이 이미 처리된 뒤 도착한 스테일 WM_TIMER → 무시.
                 }
                 _ => {}
             }
