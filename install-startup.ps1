@@ -1,15 +1,36 @@
-# 시작 프로그램 등록 스크립트 (설계 §14.2)
-# 현재 사용자 Startup 폴더에 caps-hangul.exe 바로가기를 생성한다. 관리자 권한 불필요.
+# 시작 프로그램 등록 스크립트 — 작업 스케줄러 버전 (설계 §14, §16.2)
+#
+# 릴리스 빌드는 관리자 권한(requireAdministrator)으로 실행되므로, Startup 폴더 바로가기로
+# 자동 시작하면 로그온마다 UAC 동의창이 뜬다. 이를 피하려고 "로그온 시 + 가장 높은 권한"
+# 작업으로 등록한다 → 다음 로그온부터 UAC 없이 관리자 권한으로 자동 시작.
+#
+# 작업 등록 자체에는 관리자 권한이 필요하므로, 관리자가 아니면 UAC 로 한 번 재실행한다(설치 시 1회).
 
 $ErrorActionPreference = 'Stop'
 
-# 실행 파일 경로: 스크립트와 같은 폴더의 caps-hangul.exe 를 우선 찾고,
-# 없으면 release 빌드 산출물 경로를 시도한다.
+# --- 관리자 권한 확인 + 필요 시 자기 자신을 관리자로 재실행 ---
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $IsAdmin) {
+    Write-Host "Task Scheduler registration requires administrator privileges. Prompting for elevation (UAC)..."
+    $HostPath = (Get-Process -Id $PID).Path   # 현재 PowerShell 호스트(powershell.exe / pwsh.exe)
+    # 경로에 공백이 있어도 안전하도록 -File 인자를 따옴표로 감싼다(PS 5.1/7 공통).
+    $ReArgs = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
+    try {
+        Start-Process -FilePath $HostPath -Verb RunAs -ArgumentList $ReArgs
+    } catch {
+        Write-Error "Elevation was cancelled."
+        exit 1
+    }
+    exit
+}
+
+# --- 실행 파일 경로 결정 ---
+# 스크립트와 같은 폴더의 caps-hangul.exe 를 우선 찾고, 없으면 release 빌드 산출물 경로를 시도한다.
 # 빌드는 x64 / aarch64 두 타겟을 모두 생성하므로(.cargo/config.toml 참조),
 # 현재 PC 아키텍처에 맞는 산출물을 먼저 고른다.
 $ExeName = 'caps-hangul.exe'
 
-# 현재 OS 아키텍처에 대응하는 rustc target triple
 $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
 switch ($Arch) {
     'Arm64' { $Triple = 'aarch64-pc-windows-msvc' }
@@ -27,29 +48,51 @@ $Candidates = @(
 $TargetPath = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $TargetPath) {
-    Write-Error "$ExeName 을(를) 찾을 수 없습니다. 먼저 '.\build.ps1' 로 빌드하거나 exe 를 이 폴더에 두세요."
+    Write-Error "$ExeName not found. Build it first with '.\build.ps1', or place the exe in this folder."
     exit 1
 }
+$ExeDir = Split-Path $TargetPath -Parent
 
 # 주입용 TSF 리더 DLL 이 exe 옆에 있는지 확인한다(없어도 동작은 하지만 한/영 라벨이 추정값
 # 폴백으로만 동작 — Teams 등 TSF/Chromium 앱에서 부정확). 배포본: caps-hangul-tsf-<arch>.dll,
 # 개발(cargo) 빌드: caps_hangul_tsf.dll.
-$ExeDir = Split-Path $TargetPath -Parent
 switch ($Arch) { 'Arm64' { $DllArch = 'arm64' } default { $DllArch = 'x64' } }
 $DllCandidates = @("caps-hangul-tsf-$DllArch.dll", 'caps_hangul_tsf.dll')
 if (-not ($DllCandidates | Where-Object { Test-Path (Join-Path $ExeDir $_) })) {
-    Write-Warning "TSF 리더 DLL($($DllCandidates -join ' / '))이 exe 옆에 없습니다. 한/영 라벨이 추정값 폴백으로 동작합니다. '.\build.ps1' 로 함께 빌드하세요."
+    Write-Warning "TSF reader DLL ($($DllCandidates -join ' / ')) not found next to the exe. The Han/Eng label will fall back to a best-guess value. Build it together with '.\build.ps1'."
 }
 
-$Startup = [Environment]::GetFolderPath('Startup')
-$ShortcutPath = Join-Path $Startup 'Caps Hangul.lnk'
+# --- 작업 스케줄러 등록 ---
+$TaskName = 'Caps Hangul'
+$User = "$env:USERDOMAIN\$env:USERNAME"
 
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $TargetPath
-$Shortcut.WorkingDirectory = Split-Path $TargetPath -Parent
-$Shortcut.Description = 'Caps Lock 한/영 전환 유틸리티'
-$Shortcut.Save()
+$Action  = New-ScheduledTaskAction -Execute $TargetPath -WorkingDirectory $ExeDir
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
+# 현재 사용자의 대화형 세션에서 "가장 높은 권한"으로 실행 → 로그온 시 UAC 없이 관리자 권한 시작.
+$Principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Highest
+$Settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit ([TimeSpan]::Zero)   # 시간 제한 없음(상주 프로그램)
 
-Write-Host "등록 완료: $ShortcutPath"
-Write-Host "  -> $TargetPath"
+Register-ScheduledTask -TaskName $TaskName `
+    -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings `
+    -Description 'Caps Lock 한/영 전환 유틸리티 (로그온 시 관리자 권한으로 자동 시작)' `
+    -Force | Out-Null
+
+# 구버전 Startup 폴더 바로가기가 있으면 정리한다(작업 스케줄러와 중복 실행 방지).
+$LegacyLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Caps Hangul.lnk'
+if (Test-Path $LegacyLnk) {
+    Remove-Item $LegacyLnk -Force
+    Write-Host "Removed legacy Startup shortcut: $LegacyLnk"
+}
+
+Write-Host ""
+Write-Host "Registered Task Scheduler task '$TaskName'"
+Write-Host "  Run     : $TargetPath"
+Write-Host "  Trigger : At logon (user $User), highest privileges"
+Write-Host "  -> Will auto-start with administrator privileges (no UAC) from the next logon."
+Write-Host ""
+Write-Host "To start it now:  Start-ScheduledTask -TaskName '$TaskName'"

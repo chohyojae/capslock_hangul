@@ -540,31 +540,30 @@ uninstall-startup.ps1
 shell:startup
 ```
 
-### 14.2 PowerShell 설치 스크립트
+### 14.2 PowerShell 설치 스크립트 (작업 스케줄러 — 현재 구현)
 
-향후 설치 스크립트에서 Startup 폴더에 바로가기를 생성할 수 있다.
+릴리스 빌드가 관리자 권한(`requireAdministrator`, §16.2)으로 실행되므로, Startup 폴더 바로가기나
+`HKCU\...\Run` 으로 자동 시작하면 **로그온마다 UAC 동의창**이 뜬다. 이를 피하려고 `install-startup.ps1`
+/ `uninstall-startup.ps1` 은 **작업 스케줄러**에 작업을 등록/해제한다.
 
-```powershell
-$Startup = [Environment]::GetFolderPath('Startup')
-$ShortcutPath = Join-Path $Startup 'Caps Hangul.lnk'
-$TargetPath = Join-Path $PSScriptRoot 'caps-hangul.exe'
+- 트리거: **로그온 시**(`New-ScheduledTaskTrigger -AtLogOn -User <현재 사용자>`)
+- 원칙: 현재 사용자, **가장 높은 권한**(`New-ScheduledTaskPrincipal -LogonType Interactive -RunLevel Highest`)
+  → 로그온 시 UAC 없이 관리자 권한으로 시작
+- 설정: 배터리에서도 시작/유지, 시간 제한 없음(상주), 중복 인스턴스 무시(`-MultipleInstances IgnoreNew`)
+- 작업 등록/해제에는 관리자 권한이 필요하므로, 스크립트가 관리자가 아니면 **UAC 로 자기 자신을 1회
+  재실행**한다(`Start-Process -Verb RunAs`). 이후 자동 시작에는 UAC 가 없다.
+- 구버전 Startup 폴더 바로가기(`Caps Hangul.lnk`)가 있으면 정리한다(중복 실행 방지).
 
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $TargetPath
-$Shortcut.WorkingDirectory = $PSScriptRoot
-$Shortcut.Save()
-```
-
-### 14.3 레지스트리 Run 등록
-
-대안으로 다음 위치에 등록할 수 있다.
+### 14.3 대안: Startup 폴더 / 레지스트리 Run
 
 ```text
+shell:startup
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 ```
 
-초기 버전에서는 관리 권한이 필요 없는 `HKCU` 또는 Startup 폴더 방식을 권장한다.
+관리자 권한이 필요 없던 시절(일반 권한 exe)의 방식이다. 현재는 릴리스 exe 가 관리자 권한을
+요구하므로 이 방식은 **로그온마다 UAC 가 떠서** 무인 자동 시작에 부적합하다 — 작업 스케줄러 방식
+(§14.2)을 사용한다. (관리자 권한 manifest 가 없던 빌드에서는 여전히 유효한 대안.)
 
 ---
 
@@ -661,13 +660,19 @@ Then Caps Lock 키는 Windows 기본 동작으로 복귀해야 함
 
 #### 위험
 
-일반 권한 프로세스가 관리자 권한 프로세스의 입력 처리에 영향을 주지 못하는 경우가 있을 수 있다.
+UIPI(User Interface Privilege Isolation) 상, 일반(medium) 권한 프로세스는 관리자(high) 권한 창이
+포커스를 가진 동안 ① 저수준 키보드 훅이 호출되지 않고 ② `SendInput` 주입도 차단된다. 즉 작업 관리자
+같은 elevated 앱에서는 일반 권한 실행 시 한/영·Caps 토글이 모두 동작하지 않는다.
 
 #### 대응
 
-- 기본은 일반 권한 실행
-- 관리자 권한 앱에서도 동일 동작이 필요한 경우 프로그램도 관리자 권한으로 실행하도록 문서화
-- 회사 환경에서는 보안 정책과 충돌 가능성 검토
+- **디버그 빌드는 일반 권한(`asInvoker`)** 으로 실행 — 개발/디버깅 편의. (`requireAdministrator` exe 는
+  일반 권한 셸에서 `cargo run`/CreateProcess 로 직접 실행 불가 → 디버그 워크플로가 깨지므로.)
+- **릴리스 빌드는 `build.rs`(`embed-manifest`)로 `requireAdministrator` manifest 를 임베드**해 관리자
+  권한으로 실행한다. 그래야 elevated 앱 포커스 시에도 훅이 호출되고 주입이 통한다.
+- UAC 프롬프트 없이 무인 자동 시작이 필요하면 작업 스케줄러 "가장 높은 권한 + 로그온 트리거"로 등록한다.
+- System integrity/secure desktop(UAC 동의창·잠금화면)은 관리자 권한이어도 동작 불가(OS 보안 경계).
+- 회사 환경에서는 보안 정책과 충돌 가능성 검토.
 
 ### 16.3 입력 언어/IME 차이
 
@@ -886,7 +891,8 @@ keyboard_proc(code, w_param, l_param) {
 #### 한/영 전환이 되지 않음
 
 - Windows 입력 언어에 한국어 Microsoft IME가 등록되어 있는지 확인한다.
-- 관리자 권한 앱에서만 동작하지 않는 경우 프로그램을 관리자 권한으로 실행해본다.
+- 릴리스 빌드는 관리자 권한으로 실행되어 작업 관리자 등 elevated 앱에서도 동작한다(§16.2). 디버그
+  빌드는 일반 권한이라 관리자 권한 앱 포커스 시 동작하지 않으므로, 그 경우 릴리스 빌드로 확인한다.
 - 다른 키보드 remapping 프로그램과 충돌하는지 확인한다.
 
 #### Caps Lock이 두 번 토글되는 것처럼 보임
