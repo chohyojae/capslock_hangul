@@ -3,7 +3,7 @@
 //! 본체(`caps-hangul.exe`)가 `WH_GETMESSAGE` 스레드-지정 훅으로 이 DLL 을 **진짜 포커스 창의
 //! 스레드**(다른 프로세스일 수 있음 — 예: WebView2 기반 Teams 의 `msedgewebview2.exe`)에 주입한다.
 //! 훅 프로시저가 그 스레드에서 실행되므로, 그 스레드의 TSF 입력 컨텍스트에 in-process 로 접근해
-//! 한/영 변환 모드를 정확히 읽을 수 있다(외부/cross-process 로는 불가능 — docs 참조).
+//! 한/영 변환 모드를 정확히 읽을 수 있다(외부/cross-process 로는 불가능 — README 참조).
 //!
 //! 읽기 경로:
 //!   ITfThreadMgr ─QI→ ITfCompartmentMgr

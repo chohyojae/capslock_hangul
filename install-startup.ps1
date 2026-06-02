@@ -27,8 +27,18 @@ $Candidates = @(
 $TargetPath = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $TargetPath) {
-    Write-Error "$ExeName 을(를) 찾을 수 없습니다. 먼저 'cargo build --release' 로 빌드하거나 exe 를 이 폴더에 두세요."
+    Write-Error "$ExeName 을(를) 찾을 수 없습니다. 먼저 '.\build.ps1' 로 빌드하거나 exe 를 이 폴더에 두세요."
     exit 1
+}
+
+# 주입용 TSF 리더 DLL 이 exe 옆에 있는지 확인한다(없어도 동작은 하지만 한/영 라벨이 추정값
+# 폴백으로만 동작 — Teams 등 TSF/Chromium 앱에서 부정확). 배포본: caps-hangul-tsf-<arch>.dll,
+# 개발(cargo) 빌드: caps_hangul_tsf.dll.
+$ExeDir = Split-Path $TargetPath -Parent
+switch ($Arch) { 'Arm64' { $DllArch = 'arm64' } default { $DllArch = 'x64' } }
+$DllCandidates = @("caps-hangul-tsf-$DllArch.dll", 'caps_hangul_tsf.dll')
+if (-not ($DllCandidates | Where-Object { Test-Path (Join-Path $ExeDir $_) })) {
+    Write-Warning "TSF 리더 DLL($($DllCandidates -join ' / '))이 exe 옆에 없습니다. 한/영 라벨이 추정값 폴백으로 동작합니다. '.\build.ps1' 로 함께 빌드하세요."
 }
 
 $Startup = [Environment]::GetFolderPath('Startup')

@@ -7,8 +7,14 @@ license = "MIT"
 
 # 주입용 TSF 리더 DLL(crates/caps-hangul-tsf)을 함께 빌드한다.
 # 본체 exe 와 같은 출력 폴더(target/<profile>)에 .dll 이 떨어지며, 배포 시 exe 옆에 동봉한다.
+#
+# default-members 에 본체(".")와 DLL(member)을 모두 넣어 `cargo build`/`cargo test`/빌드 별칭이
+# exe 와 .dll 을 같은 출력 폴더에 함께 만들도록 한다. (비-virtual 워크스페이스는 default-members
+# 미지정 시 루트 패키지만 빌드하므로 DLL 이 누락되고 IME 리더가 추정값 폴백으로만 동작한다.)
+# 단, `cargo run` 은 본체 바이너리의 의존성 그래프만 빌드하므로 DLL 을 만들지 않는다(README 참조).
 [workspace]
 members = ["crates/caps-hangul-tsf"]
+default-members = [".", "crates/caps-hangul-tsf"]
 
 # 배포 산출물 이름은 설계 문서(§13.4)의 caps-hangul.exe 에 맞춘다.
 [[bin]]
@@ -16,7 +22,7 @@ name = "caps-hangul"
 path = "src/main.rs"
 
 [dependencies]
-windows-sys = { version = "0.61", features = [
+windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
@@ -28,17 +34,6 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_HiDpi",              # Per-Monitor DPI 인식 + 모니터 DPI 조회
   "Win32_System_Memory",         # named shared memory (주입 DLL 과의 IPC 채널)
 ] }
-
-# 스파이크(examples/tsf_spike.rs) 전용 의존성. 평소엔 주석 처리하여 본체 빌드에서 제외한다.
-# 스파이크를 빌드/실행하려면 아래 블록의 주석을 해제: `cargo run --example tsf_spike`
-# [dev-dependencies]
-# windows = { version = "0.61", features = [
-#   "Win32_Foundation",
-#   "Win32_System_Com",
-#   "Win32_System_Threading",
-#   "Win32_UI_WindowsAndMessaging",
-#   "Win32_UI_TextServices",
-# ] }
 
 [profile.release]
 opt-level = "z"

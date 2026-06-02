@@ -4,7 +4,7 @@
 //! Teams(WebView2/Chromium) 같은 앱은 IMM32 cross-process 조회로 한/영 상태를 읽을 수 없고
 //! (항상 0=영문 반환), TSF 변환 모드는 **포커스를 가진 스레드의 입력 컨텍스트**에만 존재한다.
 //! 그 스레드는 최상위 창과 다른 프로세스일 수 있다(예: `ms-teams.exe` → `msedgewebview2.exe`).
-//! 자세한 조사·실측 근거는 `docs/teams-overlay-always-hangul.md` (§4.4–§4.5).
+//! 배경·접근 비교는 `README.md` 의 "IME 한/영 상태 정확 조회 (TSF 리더 DLL)" 절 참조.
 //!
 //! ## 동작 (on-demand)
 //! 사용자가 한/영을 토글하는 그 순간에만:
