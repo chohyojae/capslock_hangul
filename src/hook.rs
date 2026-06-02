@@ -108,10 +108,14 @@ unsafe extern "system" fn low_level_keyboard_proc(
             match classify_press(elapsed, threshold) {
                 PressKind::Long => {
                     // 타이머가 뜨기 직전에 떼서 임계 경계에 걸린 경우(또는 오버레이 미준비).
+                    // Caps 는 오버레이 핸들러가 (실제 상태 조회 → VK_CAPITAL 전송 → 표시) 를
+                    // 일관되게 처리하도록 위임한다(라벨이 실제 상태와 어긋나지 않게).
+                    // 오버레이 미준비/커스텀 키일 때는 콜백에서 직접 전송(폴백).
                     let vk = state::LONG_PRESS_VK.load(Ordering::SeqCst);
-                    input::send_key(vk);
-                    if vk == VK_CAPITAL {
+                    if vk == VK_CAPITAL && overlay::is_ready() {
                         overlay::notify_caps();
+                    } else {
+                        input::send_key(vk);
                     }
                 }
                 PressKind::Short => {

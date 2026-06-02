@@ -13,7 +13,10 @@
 //!   3. `VK_HANGUL` 전송 후 결과(= `!이전상태`)로 **한 번에** 올바른 라벨을 띄운다.
 //!   → 추정 표시 후 보정하던 방식의 중간 깜빡임이 없고, IME 로 직접 전환한 뒤에도
 //!     매번 실제 상태를 새로 읽으므로 라벨이 어긋나지 않는다.
-//! - **Caps Lock 라벨**은 토글이 결정적이므로 추정값(시작 시 실제값 seed)으로 즉시 표시한다.
+//! - **Caps Lock 라벨**도 동일하게 토글 키 전송 **직전 실제 토글 상태**를 읽어 결정한다.
+//!   (`GetKeyState` 의 lock 비트는 포커스 없는 백그라운드 스레드에서도 전역 상태를 반영한다.)
+//!   매번 새로 읽으므로 권한 격리(UIPI)로 주입이 무시되거나 화면 키보드·원격 세션 등으로
+//!   외부에서 Caps 가 바뀌어도 추정값이 누적으로 어긋나 영구히 뒤집히는 일이 없다.
 //! - 핵심 토글이 오버레이에 종속되지 않도록, 오버레이 미준비/커스텀 키일 때는
 //!   호출 측(훅)이 직접 키를 전송한다([`is_ready`]).
 //! - HiDPI: 프로세스를 Per-Monitor-V2 DPI aware 로 설정(`win32::set_dpi_aware`)하고,
@@ -77,7 +80,8 @@ static FADE_ALPHA: AtomicU32 = AtomicU32::new(0);
 
 /// 한/영 추정 상태(true=한글). IME 조회가 실패할 때만 폴백으로 사용.
 static LANG_HANGUL: AtomicBool = AtomicBool::new(false);
-/// Caps Lock 추정 상태(true=ON). 시작 시 실제값으로 seed 하고 길게 누름마다 토글한다.
+/// Caps Lock 표시 캐시(true=ON). 길게 누름마다 **실제 토글 상태를 다시 읽어** 갱신한다.
+/// 추정 누적이 아니므로 외부 변경이 있어도 다음 토글에서 자동으로 맞춰진다.
 static CAPS_ON: AtomicBool = AtomicBool::new(false);
 
 /// UTF-8 → 널 종료 UTF-16.
@@ -85,15 +89,23 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// 현재 OS Caps Lock 토글 상태(true=ON)를 실제로 읽는다.
+///
+/// `GetKeyState` 의 **lock(low) 비트**는 눌림(high) 비트와 달리 전역 토글 상태를 반영하므로,
+/// 포커스 없는(메시지를 안 받는) 이 오버레이 스레드에서도 정확하다(실측 확인).
+#[inline]
+fn caps_lock_on() -> bool {
+    // SAFETY: GetKeyState 는 부작용 없는 단순 조회.
+    unsafe { (GetKeyState(VK_CAPITAL as i32) & 0x0001) != 0 }
+}
+
 /// 오버레이 창을 생성하고 전역에 등록한다. 메시지 루프 진입 전에 한 번 호출한다.
 ///
 /// 실패해도 치명적이지 않으며, 이 경우 [`is_ready`] 가 false 를 반환해
 /// 호출 측이 HUD 없이 동작하도록 한다.
 pub fn init() -> Result<(), u32> {
-    // Caps Lock 추정값을 실제 토글 상태로 seed.
-    // SAFETY: GetKeyState 는 부작용 없는 단순 조회.
-    let caps = unsafe { (GetKeyState(VK_CAPITAL as i32) & 0x0001) != 0 };
-    CAPS_ON.store(caps, Ordering::SeqCst);
+    // Caps Lock 표시 캐시를 실제 토글 상태로 seed(이후 매 토글마다 실제값을 다시 읽는다).
+    CAPS_ON.store(caps_lock_on(), Ordering::SeqCst);
 
     let class_name = wide("CapsHangulOverlayWindow");
 
@@ -189,15 +201,23 @@ pub fn cancel_caps_long_press() {
     }
 }
 
-/// Caps Lock 토글을 안내한다(라벨은 결정적이라 즉시 표시). **훅 콜백에서 호출**.
-/// 실제 `VK_CAPITAL` 전송은 호출 측(훅)에서 이미 수행한 뒤다.
+/// Caps Lock 길게 누름을 처리한다(**훅 콜백에서 호출**, 오버레이 준비 시에만).
+///
+/// 한/영과 같은 "확인 후 표시": `VK_CAPITAL` 전송 **직전에** 실제 토글 상태를 읽어,
+/// 전송 후 상태(= 그 부정)로 라벨을 한 번에 띄운다. 매번 실제값을 새로 읽으므로
+/// 외부 변경(UIPI 로 주입 무시, 화면 키보드, 원격 세션 등)이 있어도 누적 어긋남이 없다.
 pub fn notify_caps() {
     let hwnd = OVERLAY_HWND.load(Ordering::SeqCst);
     if hwnd.is_null() {
+        // 방어적 폴백: 오버레이가 없으면 토글만 수행(표시는 생략).
+        input::send_key(VK_CAPITAL);
         return;
     }
-    let was_on = CAPS_ON.fetch_xor(true, Ordering::SeqCst);
-    let label = if !was_on { LBL_CAPS_ON } else { LBL_CAPS_OFF };
+    // 전송 직전 실제 상태를 읽어 결과 상태를 확정한 뒤 토글 키를 보낸다.
+    let next_on = !caps_lock_on();
+    input::send_key(VK_CAPITAL);
+    CAPS_ON.store(next_on, Ordering::SeqCst);
+    let label = if next_on { LBL_CAPS_ON } else { LBL_CAPS_OFF };
     // SAFETY: 유효한 창. PostMessage 는 콜백에서 안전.
     unsafe {
         PostMessageW(hwnd, WM_APP_SHOW, label as WPARAM, 0);
@@ -406,10 +426,14 @@ unsafe extern "system" fn wnd_proc(
                     KillTimer(hwnd, TIMER_CAPS);
                     state::LONG_FIRED.store(true, Ordering::SeqCst);
                     let vk = state::LONG_PRESS_VK.load(Ordering::SeqCst);
-                    input::send_key(vk);
                     if vk == VK_CAPITAL {
-                        let was_on = CAPS_ON.fetch_xor(true, Ordering::SeqCst);
-                        show_label(hwnd, if !was_on { LBL_CAPS_ON } else { LBL_CAPS_OFF });
+                        // 전송 직전 실제 토글 상태를 읽어, 전송 후 상태(=부정)로 라벨 결정.
+                        let next_on = !caps_lock_on();
+                        input::send_key(vk);
+                        CAPS_ON.store(next_on, Ordering::SeqCst);
+                        show_label(hwnd, if next_on { LBL_CAPS_ON } else { LBL_CAPS_OFF });
+                    } else {
+                        input::send_key(vk);
                     }
                 }
                 _ => {}
