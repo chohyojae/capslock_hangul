@@ -6,8 +6,9 @@ description = "포커스 스레드에 주입돼 in-process 로 IME 한/영 변�
 license = "MIT"
 
 # WH_GETMESSAGE 훅으로 대상(포커스) 프로세스에 주입되는 DLL.
-# 산출물 이름은 빌드 후 아키텍처 접미사로 리네이밍해 배포한다:
-#   caps_hangul_tsf.dll → caps-hangul-tsf-x64.dll / caps-hangul-tsf-arm64.dll
+# 대상 프로세스 비트니스에 맞춰야 하므로 x86/x64/arm64 세 종을 빌드하며, 산출물 이름은
+# 빌드 후 아키텍처 접미사로 리네이밍해 배포한다:
+#   caps_hangul_tsf.dll → caps-hangul-tsf-{x86|x64|arm64}.dll
 [lib]
 name = "caps_hangul_tsf"
 crate-type = ["cdylib"]

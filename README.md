@@ -19,37 +19,41 @@ AutoHotkey, PowerToys, .NET / Node.js 런타임 없이 단일 네이티브 `.exe
 - Windows 10 / 11 (x64, aarch64)
 - 빌드 시: [Rust stable](https://rustup.rs/) 툴체인
 
-## 구성 산출물 (2-파일)
+## 구성 산출물
 
-배포물은 **두 파일을 한 쌍**으로 동봉한다. 둘은 같은 폴더에 있어야 한다.
+배포 폴더는 본체 exe 한 개와, **세 비트니스(x86/x64/arm64)의** 리더 DLL·주입 헬퍼를 함께 담는다.
+전부 같은 폴더에 있어야 한다.
 
 | 파일 | 역할 |
 | --- | --- |
-| `caps-hangul.exe` | 본체. 키보드 훅 + HUD 오버레이 (`windows-sys`) |
-| `caps-hangul-tsf-<arch>.dll` | 포커스 스레드에 주입돼 IME 한/영 상태를 읽는 TSF 리더 (`windows`) |
+| `caps-hangul.exe` | 본체. 키보드 훅 + HUD 오버레이 (`windows-sys`). 패키지 비트니스 = OS 비트니스(x64/arm64) |
+| `caps-hangul-tsf-{x86,x64,arm64}.dll` | 포커스 스레드에 주입돼 IME 한/영 상태를 읽는 TSF 리더 (`windows`) |
+| `caps-hangul-reader-{x86,x64,arm64}.exe` | 본체와 다른 비트니스 포커스에 주입을 대신 해 주는 헬퍼(브로커) |
 
-`<arch>` 는 `x64` 또는 `arm64`. 본체는 실행 시 **자신과 같은 폴더**에서 자기 아키텍처에 맞는 DLL
-(`caps-hangul-tsf-x64.dll` / `caps-hangul-tsf-arm64.dll`, 개발 빌드에서는 `caps_hangul_tsf.dll`)을
-로드한다. DLL 이 없거나 주입이 막혀도 본체는 **추정값 폴백**으로 정상 동작한다(한/영 라벨만
-부정확해질 수 있음).
+왜 세 비트니스를 모두 동봉하나: 주입되는 DLL 의 비트니스는 **붙는 대상(포커스) 프로세스**를 따라가야
+하고, 포커스가 x86/x64/arm64 중 무엇일지 미리 알 수 없다. `SetWindowsHookEx` 는 호출자·DLL·대상의
+비트니스가 **모두 같아야** 하므로(아래 [IME 절](#ime-한영-상태-정확-조회-tsf-리더-dll) 참조), 본체는
+같은-비트니스 포커스는 직접 읽고, 다른-비트니스 포커스는 그 비트니스의 헬퍼에 주입을 위임한다.
+어느 컴포넌트도 없거나 주입이 막히면 본체는 **추정값 폴백**으로 정상 동작한다(한/영 라벨만 부정확).
 
-> exe 와 DLL 은 반드시 **같은 아키텍처**로 짝지어야 한다(주입 대상 프로세스와 비트니스 일치 필요).
-> `build.ps1` 이 아키텍처별로 자동 패키징한다.
+> `build.ps1` 이 세 비트니스 컴포넌트를 빌드해 본체 옆에 자동 패키징한다.
 
 ## 빌드
 
-본체 exe 와 주입 DLL 은 **하나의 Cargo 워크스페이스**의 두 멤버다(`default-members` 로 묶여
-있어 표준 명령이 둘을 같은 출력 폴더에 함께 만든다).
+본체 exe(`caps-hangul-rs`), 주입 DLL(`caps-hangul-tsf`), 주입 헬퍼(`caps-hangul-reader`)는 **하나의
+Cargo 워크스페이스**의 세 멤버다(`default-members` 로 묶여 있어 표준 명령이 셋을 같은 출력 폴더에
+함께 만든다).
 
 ### 선행 조건
 
-clone 직후 한 번, 구동 대상 두 타겟을 추가한다.
+clone 직후 한 번, 세 비트니스 타겟을 추가한다(컴포넌트는 세 비트니스 모두 필요).
 
 ```powershell
-rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+rustup target add i686-pc-windows-msvc x86_64-pc-windows-msvc aarch64-pc-windows-msvc
 ```
 
-> aarch64 cross-link 에는 Visual Studio 의 **"MSVC v143 - ARM64 빌드 도구"** 컴포넌트가 필요하다.
+> - i686 cross-link 에는 VS **"MSVC v143 - x86/x64 빌드 도구"**(보통 기본 포함)가 필요하다.
+> - aarch64 cross-link 에는 VS **"MSVC v143 - ARM64 빌드 도구"** 컴포넌트가 필요하다.
 
 ### 개발 중 (호스트 타겟)
 
@@ -61,30 +65,33 @@ cargo run      # 본체 실행
 cargo test     # 단위 테스트
 ```
 
-`cargo build`/`cargo test` 는 `default-members` 덕분에 exe·DLL 을 **함께** 빌드한다. 반면
-`cargo run` 은 본체 바이너리의 의존성 그래프만 빌드하므로(주입 DLL 은 본체의 의존성이 아님)
-**DLL 을 만들지 않는다.** 따라서 IME 리더까지 시험하려면 `cargo build` 로 DLL 을 먼저 만든 뒤
-`cargo run`(또는 `target\debug\caps-hangul.exe`)으로 실행한다. DLL 이 없으면 한/영 라벨은
-추정값 폴백으로 동작한다.
+`cargo build`/`cargo test` 는 `default-members` 덕분에 exe·DLL·헬퍼를 **함께**(호스트 타겟으로)
+빌드한다. 반면 `cargo run` 은 본체 바이너리의 의존성 그래프만 빌드하므로(DLL·헬퍼는 본체의 의존성이
+아님) **그 둘을 만들지 않는다.** 따라서 IME 리더까지 시험하려면 `cargo build` 로 먼저 만든 뒤
+`cargo run`(또는 `target\debug\caps-hangul.exe`)으로 실행한다. 컴포넌트가 없으면 한/영 라벨은
+추정값 폴백으로 동작한다. (개발 시엔 호스트 비트니스 컴포넌트만 만들어지므로, 다른 비트니스 포커스
+검증은 `build.ps1` 로 만든 배포 폴더에서 한다.)
 
 ### 릴리스 패키징 (배포용)
 
-`build.ps1` 이 릴리스 빌드(콘솔 창 없음·최적화) 후 DLL 을 아키텍처 접미사로 리네이밍하고
-설치 스크립트·문서까지 모아 자기완결 배포 폴더를 만든다.
+`build.ps1` 이 세 비트니스 컴포넌트(DLL + 헬퍼)와 본체 exe 를 릴리스로 빌드(콘솔 창 없음·최적화)하고,
+아키텍처 접미사로 리네이밍해 설치 스크립트·문서까지 모은 자기완결 배포 폴더를 만든다.
 
 ```powershell
-.\build.ps1                 # 현재 PC 아키텍처(보통 x64)만
-.\build.ps1 -Arch arm64     # arm64 만
-.\build.ps1 -Arch all       # x64 + arm64 모두
+.\build.ps1                 # 현재 PC 아키텍처(보통 x64) 본체 패키지
+.\build.ps1 -Arch arm64     # arm64 본체 패키지
+.\build.ps1 -Arch all       # x64 + arm64 본체 패키지 모두
 .\build.ps1 -Arch all -Zip  # 모두 빌드 후 각 폴더를 zip 압축
 ```
 
-결과는 `dist\` 아래에 아키텍처별로 떨어진다.
+`-Arch` 는 **본체 exe(패키지)의 비트니스**만 고른다. 컴포넌트 DLL·헬퍼는 이 값과 무관하게 항상
+x86/x64/arm64 세 종 모두 빌드돼 동봉된다. 결과는 `dist\` 아래에 떨어진다.
 
 ```text
 dist\caps-hangul-x64\
-  caps-hangul.exe
-  caps-hangul-tsf-x64.dll
+  caps-hangul.exe                (본체, x64)
+  caps-hangul-tsf-x86.dll        caps-hangul-tsf-x64.dll    caps-hangul-tsf-arm64.dll
+  caps-hangul-reader-x86.exe     caps-hangul-reader-x64.exe caps-hangul-reader-arm64.exe
   install-startup.ps1
   uninstall-startup.ps1
   README.md
@@ -93,20 +100,18 @@ dist\caps-hangul-x64\
 
 ### 직접 cargo 로 빌드 (스크립트 없이)
 
-`build.ps1` 없이 빌드하려면 **반드시 `--workspace`** 로 DLL 까지 함께 빌드한다.
-(`.cargo\config.toml` 의 `cargo build-all` / `build-x64` / `build-aarch64` 별칭도 사용 가능.)
+컴포넌트는 비트니스별로 따로 빌드한다(출력은 `target\<triple>\release\` 의 `caps_hangul_tsf.dll`,
+`caps-hangul-reader.exe`).
 
 ```powershell
-cargo build --release --workspace --target x86_64-pc-windows-msvc
+# 컴포넌트(예: x86) — 대상이 될 수 있는 모든 비트니스에 대해 반복
+cargo build --release -p caps-hangul-tsf -p caps-hangul-reader --target i686-pc-windows-msvc
+# 본체 exe(예: x64)
+cargo build --release -p caps-hangul-rs --target x86_64-pc-windows-msvc
 ```
 
-산출물:
-
-- x64: `target\x86_64-pc-windows-msvc\release\` 의 `caps-hangul.exe` + `caps_hangul_tsf.dll`
-- aarch64: `target\aarch64-pc-windows-msvc\release\` 의 `caps-hangul.exe` + `caps_hangul_tsf.dll`
-
-배포 시 `caps_hangul_tsf.dll` 을 `caps-hangul-tsf-<arch>.dll` 로 리네이밍해 exe 옆에 둔다
-(`build.ps1` 이 자동으로 해 주는 단계).
+배포 시 각 비트니스의 `caps_hangul_tsf.dll`/`caps-hangul-reader.exe` 를 `caps-hangul-tsf-<arch>.dll`/
+`caps-hangul-reader-<arch>.exe` 로 리네이밍해 본체 옆에 둔다(`build.ps1` 이 자동으로 해 주는 단계).
 
 ## 테스트
 
@@ -118,7 +123,7 @@ cargo test
 
 ## 사용법
 
-1. 배포 폴더(`caps-hangul.exe` + `caps-hangul-tsf-<arch>.dll`)를 원하는 디렉터리에 복사한다.
+1. 배포 폴더 전체(`caps-hangul.exe` + 세 비트니스 DLL·헬퍼 + 스크립트)를 원하는 디렉터리에 복사한다.
 2. `caps-hangul.exe` 를 실행한다. (콘솔 창 없이 백그라운드 상주)
 3. 자동 실행이 필요하면 아래 스크립트를 사용하거나 `shell:startup` 에 바로가기를 등록한다.
 
@@ -170,7 +175,7 @@ TSF 의 `ITfThreadMgr` 는 호출 스레드/프로세스 로컬이라 cross-proc
 
 | | 접근 | 정확도 | 비고 |
 | --- | --- | --- | --- |
-| **채택** | **포커스 스레드 in-process 주입** — 진짜 포커스 창(다른 프로세스 가능)의 스레드에 리더 DLL 을 잠깐 주입, 그 안에서 TSF compartment 를 읽어 회신 | ✅ Teams 포함 정확 | 침습적(타 프로세스에 DLL 로드), 비트니스 일치 필요, 백신 오탐 소지, 샌드박스/상위 무결성 포커스엔 주입 불가 |
+| **채택** | **포커스 스레드 in-process 주입** — 진짜 포커스 창(다른 프로세스 가능)의 스레드에 리더 DLL 을 잠깐 주입, 그 안에서 TSF compartment 를 읽어 회신 | ✅ Teams 포함 정확 | 침습적(타 프로세스에 DLL 로드), 다른 비트니스엔 헬퍼 필요(동봉), 백신 오탐 소지, 샌드박스/상위 무결성 포커스엔 주입 불가 |
 | 기각 | IMM32 cross-process | ✗ Chromium 에서 항상 0 | 1차 원인 |
 | 기각 | TSF langbar cross-process (`GetThreadLangBarItemMgr`) | ✗ E_FAIL | cross-process 경로 없음 |
 | 기각 | 본체 자신 in-process 상태 읽기 | ✗ 컨텍스트 없음 | 포커스를 못 받는 백그라운드 프로세스엔 입력 컨텍스트가 인스턴스화되지 않음 |
@@ -180,22 +185,42 @@ TSF 의 `ITfThreadMgr` 는 호출 스레드/프로세스 로컬이라 cross-proc
 사용자가 한/영을 토글하는 **그 순간에만**:
 
 1. 진짜 포커스 창을 `AttachThreadInput` + `GetFocus` 로 구하고(프로세스 경계 초월),
-2. 그 스레드에 `WH_GETMESSAGE` 훅으로 리더 DLL(`caps-hangul-tsf`)을 잠깐 주입,
-3. `WM_NULL` 을 보내 훅을 깨우면 DLL 이 in-process 로 변환 모드
+2. 그 프로세스의 아키텍처를 `IsWow64Process2` 로 판별,
+3. **같은 비트니스**면 본체가 그 스레드에 리더 DLL(`caps-hangul-tsf`)을 `WH_GETMESSAGE` 훅으로 직접 주입(in-process, 빠른 경로). **다른 비트니스**면 그 비트니스의 헬퍼 exe 를 잠깐 실행해 위임(아래 [비트니스 라우팅](#비트니스-라우팅-브로커)),
+4. `WM_NULL` 을 보내 훅을 깨우면 DLL 이 in-process 로 변환 모드
    (`GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION` → `IME_CMODE_NATIVE` 비트)를 읽어
    named shared memory 에 쓰고 named event 로 신호,
-4. 결과를 읽고 **즉시 훅을 해제**(상시 주입/상주 없음 — 호스트 부하·발자국 최소).
+5. 결과를 읽고 **즉시 훅을 해제**(상시 주입/상주 없음 — 호스트 부하·발자국 최소).
 
 상시 전역 주입이 아니라 토글 시점에만 잠깐 주입·해제하므로 침습·오탐·안정성 위험이 작다.
 주입 DLL 은 남의 프로세스 안에서 도는 코드라 훅 본문 전체를 `catch_unwind` 로 감싸
 **어떤 경우에도 호스트를 죽이지 않는다**(릴리스 프로파일에서 `panic = "abort"` 를 의도적으로
 빼 둔 이유 — `Cargo.toml` 참조).
 
+### 비트니스 라우팅 (브로커)
+
+`SetWindowsHookEx` 로 다른 프로세스에 DLL 을 주입하려면 **호출 프로세스·주입 DLL·대상 프로세스의
+비트니스가 모두 같아야** 한다. DLL 은 호출자에 먼저 `LoadLibrary` 되고 그 in-process 훅 프로시저
+주소를 시스템에 넘기기 때문이다(프로세스는 다른 비트니스 DLL 을 로드조차 못 한다). 따라서 단일
+본체 exe 로는 자기 비트니스 프로세스에만 붙을 수 있다.
+
+포커스가 본체와 다른 비트니스(예: **x64 본체 + 32비트 앱**, 또는 **arm64 본체 + x64 에뮬 앱**)면,
+본체는 대상 비트니스로 빌드된 헬퍼 `caps-hangul-reader-<arch>.exe` 를 콘솔 없이 잠깐 실행한다.
+헬퍼가 자기 비트니스의 DLL 을 대상 스레드에 주입하고, DLL 은 본체가 만든 **동일한** named shared
+memory 에 결과를 쓴다(레이아웃이 모두 4바이트 고정이라 비트니스 간 호환). 본체는 헬퍼의 종료를
+기다린 뒤 그 값을 읽는다. 그래서 세 비트니스의 DLL·헬퍼를 모두 동봉한다.
+
+| 실행 OS | 만날 수 있는 포커스 | 처리 |
+| --- | --- | --- |
+| x64 | x64(직접) / x86(헬퍼) | `caps-hangul-tsf-x86.dll` + `caps-hangul-reader-x86.exe` 가 32비트 앱 담당 |
+| arm64 | arm64(직접) / x64·x86(헬퍼) | x64·x86 헬퍼가 에뮬레이션 앱 담당 |
+
 ### 한계 / 폴백
 
 - **샌드박스/상위 무결성 포커스**(예: `SearchHost.exe`=AppContainer, 관리자 권한 창)에는 주입 불가
   → 이 경우 내부 추정값으로 폴백한다.
-- **비트니스 일치** 필요(x64 대상엔 x64 DLL, arm64 엔 arm64 DLL).
+- 다른-비트니스 경로는 헬퍼 프로세스를 잠깐 띄우므로 같은-비트니스(in-process)보다 수십 ms 느리다
+  (드문 경우라 체감 영향은 작다).
 - 전역 훅 주입은 **백신/EDR 오탐 소지**가 있으니 회사 환경 배포 시 고려한다.
 
 ## 시작 프로그램 등록
@@ -220,8 +245,10 @@ TSF 의 `ITfThreadMgr` 는 호출 스레드/프로세스 로컬이라 cross-proc
 
 - **한/영 전환이 되지 않음**: Windows 입력 언어에 한국어 Microsoft IME 가 등록되어 있는지 확인.
   관리자 권한 앱에서만 동작하지 않으면 프로그램도 관리자 권한으로 실행해 본다.
-- **Teams 등에서 한/영 라벨이 항상 "한"/부정확**: 짝 DLL(`caps-hangul-tsf-<arch>.dll`)이 exe 옆에
-  있는지, 아키텍처가 맞는지 확인. 백신/EDR 이 DLL 주입을 차단하면 추정값 폴백으로 동작한다.
+- **Teams 등에서 한/영 라벨이 항상 "한"/부정확**: 세 비트니스 DLL·헬퍼(`caps-hangul-tsf-*.dll`,
+  `caps-hangul-reader-*.exe`)가 exe 옆에 모두 있는지 확인. 특히 32비트 앱이 포커스인데 라벨이
+  부정확하면 `caps-hangul-tsf-x86.dll`/`caps-hangul-reader-x86.exe` 가 빠졌을 수 있다. 백신/EDR 이
+  DLL 주입(또는 헬퍼 실행)을 차단하면 추정값 폴백으로 동작한다.
 - **Caps Lock 이 두 번 토글되는 듯함**: 프로그램이 중복 실행 중인지 확인(named mutex 로 방지됨).
 - **키 입력이 느려짐**: 릴리스 빌드는 로그가 비활성화되어 있다. 다른 remapping 프로그램과의 충돌을 확인.
 
@@ -237,9 +264,10 @@ TSF 의 `ITfThreadMgr` 는 호출 스레드/프로세스 로컬이라 cross-proc
 | `src/state.rs` | 전역 atomic 상태 |
 | `src/single_instance.rs` | named mutex 기반 중복 실행 방지 |
 | `src/overlay.rs` | 전환 안내 HUD(레이어드 창 렌더링) |
-| `src/ime.rs` | IME 한/영 상태 리더 본체 측(DLL 로드·주입·IPC) |
+| `src/ime.rs` | IME 한/영 상태 리더 본체 측(비트니스 판별·DLL 로드/in-process 주입·헬퍼 위임·IPC) |
 | `src/logging.rs` | 디버그 빌드 전용 로깅 |
-| `crates/caps-hangul-tsf/` | 포커스 스레드에 주입되는 TSF 리더 DLL |
+| `crates/caps-hangul-tsf/` | 포커스 스레드에 주입되는 TSF 리더 DLL (x86/x64/arm64) |
+| `crates/caps-hangul-reader/` | 다른 비트니스 포커스용 주입 헬퍼(브로커) exe (x86/x64/arm64) |
 
 ## 라이선스
 

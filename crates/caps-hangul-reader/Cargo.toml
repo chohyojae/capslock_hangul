@@ -1,0 +1,23 @@
+[package]
+name = "caps-hangul-reader"
+version = "0.1.0"
+edition = "2021"
+description = "대상(포커스) 프로세스의 비트니스에 맞춰 TSF 리더 DLL 을 주입하는 per-arch 헬퍼(브로커)"
+license = "MIT"
+
+# 본체(caps-hangul.exe)가 자신과 다른 비트니스의 포커스 프로세스를 만나면 이 헬퍼를 그 비트니스로
+# 실행해 주입을 대신 시킨다(SetWindowsHookEx 는 caller·DLL·target 비트니스 일치 필요 — README 참조).
+# 산출물 이름은 빌드 후 아키텍처 접미사로 리네이밍해 배포한다:
+#   caps-hangul-reader.exe → caps-hangul-reader-{x86|x64|arm64}.exe
+[[bin]]
+name = "caps-hangul-reader"
+path = "src/main.rs"
+
+[dependencies]
+# 본체와 동일하게 경량 windows-sys 만 쓴다(COM/TSF 는 주입되는 DLL 쪽이 담당).
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }

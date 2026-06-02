@@ -5,16 +5,18 @@ edition = "2021"
 description = "Windows Caps Lock 한/영 전환 유틸리티 (짧게 누름: 한/영, 길게 누름: Caps Lock)"
 license = "MIT"
 
-# 주입용 TSF 리더 DLL(crates/caps-hangul-tsf)을 함께 빌드한다.
-# 본체 exe 와 같은 출력 폴더(target/<profile>)에 .dll 이 떨어지며, 배포 시 exe 옆에 동봉한다.
+# 워크스페이스 멤버:
+#   - crates/caps-hangul-tsf    : 포커스 스레드에 주입되는 TSF 리더 DLL
+#   - crates/caps-hangul-reader : 다른 비트니스 포커스 프로세스용 주입 헬퍼(브로커) exe
+# 본체 exe 와 같은 출력 폴더(target/<profile>)에 .dll/.exe 가 떨어지며, 배포 시 exe 옆에 동봉한다.
 #
-# default-members 에 본체(".")와 DLL(member)을 모두 넣어 `cargo build`/`cargo test`/빌드 별칭이
-# exe 와 .dll 을 같은 출력 폴더에 함께 만들도록 한다. (비-virtual 워크스페이스는 default-members
-# 미지정 시 루트 패키지만 빌드하므로 DLL 이 누락되고 IME 리더가 추정값 폴백으로만 동작한다.)
-# 단, `cargo run` 은 본체 바이너리의 의존성 그래프만 빌드하므로 DLL 을 만들지 않는다(README 참조).
+# default-members 에 본체(".")와 두 멤버를 모두 넣어 `cargo build`/`cargo test`/빌드 별칭이
+# exe·dll·reader 를 같은 출력 폴더에 함께 만들도록 한다. (비-virtual 워크스페이스는 default-members
+# 미지정 시 루트 패키지만 빌드하므로 DLL/헬퍼가 누락되고 IME 리더가 추정값 폴백으로만 동작한다.)
+# 단, `cargo run` 은 본체 바이너리의 의존성 그래프만 빌드하므로 멤버를 만들지 않는다(README 참조).
 [workspace]
-members = ["crates/caps-hangul-tsf"]
-default-members = [".", "crates/caps-hangul-tsf"]
+members = ["crates/caps-hangul-tsf", "crates/caps-hangul-reader"]
+default-members = [".", "crates/caps-hangul-tsf", "crates/caps-hangul-reader"]
 
 # 배포 산출물 이름은 설계 문서(§13.4)의 caps-hangul.exe 에 맞춘다.
 [[bin]]
