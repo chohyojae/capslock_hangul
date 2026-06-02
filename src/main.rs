@@ -10,6 +10,7 @@ mod logging;
 mod overlay;
 mod single_instance;
 mod state;
+mod tray;
 mod win32;
 
 use config::Config;
@@ -64,11 +65,17 @@ fn main() {
         logging::log("IME 리더 초기화 실패 (한/영 라벨은 추정값 폴백으로 동작)");
     }
 
-    logging::log("caps-hangul-rs 실행 중. 종료하려면 프로세스를 종료하세요.");
+    // 3-3. 시스템 트레이 아이콘(우클릭 메뉴 + 정보 다이얼로그). 실패해도 치명적이지 않음.
+    if let Err(code) = tray::init() {
+        logging::log(&format!("트레이 아이콘 초기화 실패: error {code} (트레이 없이 계속 실행)"));
+    }
+
+    logging::log("caps-hangul-rs 실행 중. 트레이 아이콘 우클릭 → Exit 또는 프로세스 종료.");
 
     // 4. 메시지 루프 (§10.2) — idle 상태에서 CPU 사용률은 사실상 0%.
     win32::run_message_loop();
 
-    // 5. 정리: IME 리더 자원 해제 + _hook / _instance 의 Drop 으로 훅/뮤텍스 정리 (§10.3)
+    // 5. 정리: 트레이 아이콘 제거 + IME 리더 자원 해제 + _hook / _instance 의 Drop (§10.3)
+    tray::shutdown();
     ime::shutdown();
 }

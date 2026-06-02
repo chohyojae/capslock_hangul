@@ -9,7 +9,7 @@ use windows_sys::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, TranslateMessage, MSG,
+    DispatchMessageW, GetMessageW, IsDialogMessageW, TranslateMessage, MSG,
 };
 
 /// 단조 증가하는 millisecond tick 값 (§7.3 권장 GetTickCount64 기반).
@@ -35,12 +35,20 @@ pub fn set_dpi_aware() {
 ///
 /// WM_QUIT 를 수신하기 전까지 블로킹되며, idle 상태에서는 CPU 를 거의 사용하지 않는다.
 /// 저수준 키보드 훅 콜백은 이 스레드가 메시지를 디스패치할 때 호출된다.
+///
+/// 정보 다이얼로그(트레이 메뉴)가 열려 있으면 그 메시지를 `IsDialogMessageW` 에 먼저 위임해
+/// Tab/Enter/Esc/기본 버튼 같은 다이얼로그 키보드 탐색이 동작하게 한다(다이얼로그가 없으면
+/// `active_dialog` 가 null → 추가 비용 없이 평소대로 디스패치).
 pub fn run_message_loop() {
     // SAFETY: msg 는 GetMessageW 가 채워주는 출력 버퍼이며, 루프 동안만 사용된다.
     unsafe {
         let mut msg: MSG = std::mem::zeroed();
         // GetMessageW: 오류 시 -1, WM_QUIT 시 0, 그 외 양수.
         while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
+            let dlg = crate::tray::active_dialog();
+            if !dlg.is_null() && IsDialogMessageW(dlg, &msg) != 0 {
+                continue; // 다이얼로그가 처리함(이미 디스패치됨).
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }

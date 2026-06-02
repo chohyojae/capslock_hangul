@@ -35,6 +35,7 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Graphics_Gdi",          # HUD 오버레이 렌더링 (폰트, 브러시, 둥근 사각형, 모니터)
   "Win32_UI_HiDpi",              # Per-Monitor DPI 인식 + 모니터 DPI 조회
   "Win32_System_Memory",         # named shared memory (주입 DLL 과의 IPC 채널)
+  "Win32_UI_Shell",              # 트레이 아이콘(Shell_NotifyIcon) + 브라우저 열기(ShellExecuteW)
 ] }
 
 [build-dependencies]
