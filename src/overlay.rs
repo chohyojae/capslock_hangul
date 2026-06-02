@@ -66,7 +66,7 @@ const TIMER_CAPS: usize = 3; // Caps Lock 임계 시간 도달 감지(누르고 
 const HOLD_MS: u32 = 750; // 완전 표시 유지 시간
 const FADE_STEP_MS: u32 = 20; // 페이드 틱 간격
 const FADE_DEC: i32 = 22; // 틱당 알파 감소량
-const BASE_ALPHA: u8 = 235; // 표시 시 기본 알파(0~255)
+const BASE_ALPHA: u8 = 150; // 표시 시 기본 알파(0~255). 낮을수록 더 비침(화면을 덜 가림)
 
 // ── 전역 상태 (메인 스레드 전용이지만 콜백 공유 위해 atomic 사용) ─────────────
 static OVERLAY_HWND: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -147,7 +147,7 @@ pub fn init() -> Result<(), u32> {
         }
 
         // 어두운 반투명 배경 브러시(한 번만 생성). RGB(28,28,30).
-        DARK_BRUSH.store(CreateSolidBrush(rgb(28, 28, 30)), Ordering::SeqCst);
+        DARK_BRUSH.store(CreateSolidBrush(rgb(48, 48, 52)), Ordering::SeqCst);
         OVERLAY_HWND.store(hwnd, Ordering::SeqCst);
     }
 
@@ -210,10 +210,10 @@ fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
 /// 라벨별 기본(96 DPI) 박스/폰트 메트릭. 반환: (너비, 높이, 모서리반경, 폰트px, 한글폰트여부)
 fn metrics_96(label: u32) -> (i32, i32, i32, i32, bool) {
     match label {
-        LBL_HANGUL => (150, 150, 30, 92, true),
-        LBL_ENGLISH => (150, 150, 30, 92, false),
+        LBL_HANGUL => (88, 88, 22, 52, true),
+        LBL_ENGLISH => (88, 88, 22, 52, false),
         // CAPS ON / OFF
-        _ => (300, 130, 28, 46, false),
+        _ => (200, 88, 22, 32, false),
     }
 }
 
