@@ -528,6 +528,23 @@ install-startup.ps1
 uninstall-startup.ps1
 ```
 
+### 13.5 파일 속성 (버전 정보) — 현재 구현
+
+모든 빌드(디버그·릴리스)는 세 산출물(본체 exe·TSF 리더 DLL·주입 헬퍼 exe)에 **`VERSIONINFO`
+리소스**를 임베드한다 → 파일 속성 "자세히" 탭에 파일 설명·파일 버전·제품 이름·저작권이 표시된다.
+
+- 각 크레이트의 `build.rs` 가 `.rc` 를 `OUT_DIR` 에 생성하고 `embed-resource` 가 Windows SDK 의
+  rc.exe 로 컴파일·링크한다(MSVC 빌드에 이미 동봉 — 별도 설치 불필요).
+- 버전(`FILEVERSION`/`PRODUCTVERSION`)은 `CARGO_PKG_VERSION` 에서 동기화(`x.y.z` → `x,y,z,0`).
+  제품 이름 `Caps Hangul`, 회사/저작권 `chohyojae` / `Copyright © 2026 chohyojae`, 파일 설명은
+  산출물별.
+- **구현 주의**: 헤더(`winver.h`) 의존을 없애려 숫자 리터럴만 쓰되 리소스 ID 는 **반드시 정수 `1`**
+  (`1 VERSIONINFO`)로 둔다. `VS_VERSION_INFO`(winver.h 매크로 `=1`)를 헤더 없이 그대로 쓰면 rc.exe 가
+  이를 *문자열 이름*으로 컴파일해, 버전 API(정수 ID 1 로 조회)가 못 읽는다(데이터 바이트는 들어가지만
+  속성 창은 빈칸). ©(UTF-8)는 `#pragma code_page(65001)` 로 처리.
+- 버전 정보(`RT_VERSION`)는 관리자 권한 manifest(`RT_MANIFEST`, §16.2)와 리소스 종류가 달라 릴리스
+  exe 에 함께 임베드돼도 충돌하지 않는다(manifest 는 `embed-manifest` 로 별도 처리).
+
 ---
 
 ## 14. 시작 프로그램 등록 설계

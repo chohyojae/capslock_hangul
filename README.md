@@ -113,6 +113,24 @@ cargo build --release -p caps-hangul-rs --target x86_64-pc-windows-msvc
 배포 시 각 비트니스의 `caps_hangul_tsf.dll`/`caps-hangul-reader.exe` 를 `caps-hangul-tsf-<arch>.dll`/
 `caps-hangul-reader-<arch>.exe` 로 리네이밍해 본체 옆에 둔다(`build.ps1` 이 자동으로 해 주는 단계).
 
+### 파일 속성 (버전 정보)
+
+모든 빌드(디버그·릴리스)는 세 산출물(exe·DLL·헬퍼 exe)에 **버전 정보(`VERSIONINFO` 리소스)** 를
+임베드한다 → 파일 우클릭 → 속성 → **"자세히" 탭**에 파일 설명·파일 버전·제품 이름·저작권이 표시된다.
+각 크레이트의 `build.rs` 가 `.rc` 를 생성해 Windows SDK 의 rc.exe 로 컴파일·링크한다(`embed-resource`).
+
+| 필드 | 값 |
+| --- | --- |
+| 제품 이름(ProductName) | `Caps Hangul` |
+| 파일 버전 / 제품 버전 | 각 `Cargo.toml` 의 `version` 에서 자동 동기화(`0.1.0` → `0.1.0.0`) |
+| 회사 이름 / 저작권 | `chohyojae` / `Copyright © 2026 chohyojae` |
+| 파일 설명(FileDescription) | 산출물별 — 본체 / TSF 리더 DLL / 주입 헬퍼 |
+
+- **버전 변경**: 각 `Cargo.toml` 의 `version` 만 올리면 리소스에 자동 반영된다(별도 편집 불필요).
+- **명의·설명 변경**: 해당 크레이트의 `build.rs` 에서 수정한다.
+- 버전 정보(`RT_VERSION`)는 관리자 권한 manifest(`RT_MANIFEST`, 아래 [관리자 권한](#관리자-권한))와
+  리소스 종류가 달라, 릴리스 exe 에 둘이 함께 임베드돼도 충돌하지 않는다.
+
 ## 테스트
 
 ```powershell
