@@ -1,5 +1,7 @@
 # caps-hangul-rs
 
+<img src="assets/caps_lock_icon.png" alt="caps-hangul-rs 아이콘" width="1024">
+
 Windows 환경에서 macOS 의 Caps Lock 동작과 유사하게 동작하는 경량 Rust 유틸리티.
 
 - **Caps Lock 짧게 누름** → 한/영 전환 (`VK_HANGUL`, 0x15)

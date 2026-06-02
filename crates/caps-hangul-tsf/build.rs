@@ -11,21 +11,25 @@ fn main() {
         return;
     }
 
+    // DLL 에는 아이콘을 넣지 않는다(탐색기 앱 아이콘과 무관) → icon_rel = None.
     embed_version_info(
         "Caps Hangul TSF reader (in-process IME state reader)",
         "caps_hangul_tsf",
         "caps_hangul_tsf.dll",
         "0x2L", // VFT_DLL
+        None,
     );
 }
 
 /// VERSIONINFO 리소스(.rc)를 생성해 rc.exe 로 컴파일·링크한다.
 /// 버전은 CARGO_PKG_VERSION 에서 동기화한다(`x.y.z` → `x,y,z,0`).
+/// `icon_rel` 이 Some 이면 그 경로(CARGO_MANIFEST_DIR 기준 상대)의 .ico 를 함께 임베드한다.
 fn embed_version_info(
     file_description: &str,
     internal_name: &str,
     original_filename: &str,
     file_type: &str,
+    icon_rel: Option<&str>,
 ) {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
@@ -39,11 +43,34 @@ fn embed_version_info(
         .next()
         .unwrap_or("0");
 
+    // 아이콘 리소스 줄(.ico). 가장 낮은 ID 의 아이콘이 탐색기/작업표시줄 앱 아이콘이 된다.
+    // rc.exe 의 .rc 는 OUT_DIR 에 쓰이므로 상대 경로가 안 먹는다 → 절대 경로(+ '/')로 박는다.
+    let icon_line = match icon_rel {
+        Some(rel) => {
+            let mut p = std::path::PathBuf::from(
+                std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+            );
+            for comp in rel.split('/') {
+                match comp {
+                    "" | "." => {}
+                    ".." => {
+                        p.pop();
+                    }
+                    c => p.push(c),
+                }
+            }
+            println!("cargo:rerun-if-changed={}", p.display());
+            let path = p.to_string_lossy().replace('\\', "/");
+            format!("1 ICON \"{path}\"\n\n")
+        }
+        None => String::new(),
+    };
+
     // rc.exe 가 UTF-8(©)을 읽도록 code_page 65001 선언. winver.h 의존 제거를 위해 숫자 리터럴만 사용.
     let rc = format!(
         "#pragma code_page(65001)\n\
 \n\
-1 VERSIONINFO\n\
+{icon_line}1 VERSIONINFO\n\
  FILEVERSION {major},{minor},{patch},0\n\
  PRODUCTVERSION {major},{minor},{patch},0\n\
  FILEFLAGSMASK 0x3fL\n\
