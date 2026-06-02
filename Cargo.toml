@@ -40,10 +40,10 @@ windows-sys = { version = "0.61.2", features = [
 [build-dependencies]
 # 릴리스 exe 에 requireAdministrator manifest 를 임베드한다(build.rs).
 # 외부 rc.exe/mt.exe 없이 순수 Rust 로 처리. (관리자 권한 앱 — 작업 관리자 등 — 대응)
-embed-manifest = "1.4"
+embed-manifest = "1.5.0"
 # 모든 빌드에 버전 정보(VERSIONINFO) 리소스를 임베드한다(build.rs) → 파일 속성 "자세히" 탭에
 # 파일 설명·버전·제품 이름·저작권 표시. Windows SDK 의 rc.exe(MSVC 빌드에 이미 동봉)를 사용.
-embed-resource = "2"
+embed-resource = "3.0.9"
 
 [profile.release]
 opt-level = "z"

@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 [build-dependencies]
 # 버전 정보(VERSIONINFO)를 DLL 에 임베드한다(build.rs) → 파일 속성 "자세히" 탭 표시.
 # Windows SDK 의 rc.exe(MSVC 빌드에 이미 동봉)를 사용한다.
-embed-resource = "2"
+embed-resource = "3.0.9"
 
 [dependencies]
 # COM/TSF 를 다루므로 본체(windows-sys)와 달리 상위 래퍼 crate(windows)를 쓴다.
