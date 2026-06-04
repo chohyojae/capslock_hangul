@@ -22,11 +22,9 @@ impl SingleInstance {
     /// - `Ok(None)`: 이미 다른 인스턴스가 실행 중.
     /// - `Err(code)`: mutex 생성 실패 (Win32 error code).
     pub fn acquire() -> Result<Option<Self>, u32> {
-        let name = to_wide(MUTEX_NAME);
-
-        // SAFETY: name 은 널 종료된 유효한 wide 문자열이다.
+        // SAFETY: w!(MUTEX_NAME) 은 널 종료된 'static UTF-16 포인터다.
         unsafe {
-            let handle = CreateMutexW(ptr::null(), 1, name.as_ptr());
+            let handle = CreateMutexW(ptr::null(), 1, w!(MUTEX_NAME));
             if handle.is_null() {
                 return Err(GetLastError());
             }
@@ -46,9 +44,4 @@ impl Drop for SingleInstance {
             CloseHandle(self.handle);
         }
     }
-}
-
-/// UTF-8 문자열을 널 종료된 UTF-16 벡터로 변환한다.
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
 }

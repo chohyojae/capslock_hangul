@@ -117,8 +117,8 @@ fn set_sz(dst: &mut [u16], s: &str) {
 ///
 /// 실패해도 치명적이지 않으며(트레이 없이 동작), 이 경우 `Err(code)` 를 돌려준다.
 pub fn init() -> Result<(), u32> {
-    let class_tray = wide("CapsHangulTrayWindow");
-    let class_dlg = wide("CapsHangulInfoDialog");
+    let class_tray = w!("CapsHangulTrayWindow");
+    let class_dlg = w!("CapsHangulInfoDialog");
 
     // SAFETY: 표준 클래스 등록 + 창 생성 + Shell_NotifyIcon 시퀀스.
     unsafe {
@@ -128,7 +128,7 @@ pub fn init() -> Result<(), u32> {
         let mut wc: WNDCLASSW = std::mem::zeroed();
         wc.lpfnWndProc = Some(tray_wnd_proc);
         wc.hInstance = hinstance;
-        wc.lpszClassName = class_tray.as_ptr();
+        wc.lpszClassName = class_tray;
         if RegisterClassW(&wc) == 0 {
             return Err(GetLastError());
         }
@@ -137,7 +137,7 @@ pub fn init() -> Result<(), u32> {
         let mut wcd: WNDCLASSW = std::mem::zeroed();
         wcd.lpfnWndProc = Some(dialog_wnd_proc);
         wcd.hInstance = hinstance;
-        wcd.lpszClassName = class_dlg.as_ptr();
+        wcd.lpszClassName = class_dlg;
         wcd.hCursor = LoadCursorW(ptr::null_mut(), IDC_ARROW);
         wcd.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         if RegisterClassW(&wcd) == 0 {
@@ -147,8 +147,8 @@ pub fn init() -> Result<(), u32> {
         // 숨김 트레이 창(표시 안 함) — 콜백 수신 + 메뉴/포그라운드 소유자.
         let hwnd = CreateWindowExW(
             0,
-            class_tray.as_ptr(),
-            wide("Caps Hangul Tray").as_ptr(),
+            class_tray,
+            w!("Caps Hangul Tray"),
             WS_OVERLAPPED,
             0,
             0,
@@ -246,8 +246,8 @@ unsafe fn show_context_menu(hwnd: *mut c_void) {
         return;
     }
     // `&` 니모닉 → 단축키 I / X. 표시 텍스트는 "Info" / "Exit".
-    AppendMenuW(menu, MF_STRING, ID_INFO as usize, wide("&Info").as_ptr());
-    AppendMenuW(menu, MF_STRING, ID_EXIT as usize, wide("E&xit").as_ptr());
+    AppendMenuW(menu, MF_STRING, ID_INFO as usize, w!("&Info"));
+    AppendMenuW(menu, MF_STRING, ID_EXIT as usize, w!("E&xit"));
 
     let mut pt = POINT { x: 0, y: 0 };
     GetCursorPos(&mut pt);
@@ -315,11 +315,11 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
     let wx = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - ww) / 2;
     let wy = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - wh) / 2;
 
-    let class_dlg = wide("CapsHangulInfoDialog");
+    let class_dlg = w!("CapsHangulInfoDialog");
     let title = wide(&format!("About {PROGRAM_NAME}"));
     let dlg = CreateWindowExW(
         win_ex,
-        class_dlg.as_ptr(),
+        class_dlg,
         title.as_ptr(),
         win_style,
         wx,
@@ -340,13 +340,13 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
     //   underline, strikeout, charset(1=DEFAULT), outprec, clipprec, quality(5=CLEARTYPE),
     //   pitch&family, facename.
     let f_title = CreateFontW(
-        -s(21), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 5, 0, wide("Segoe UI").as_ptr(),
+        -s(21), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 5, 0, w!("Segoe UI"),
     );
     let f_text = CreateFontW(
-        -s(15), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, wide("Segoe UI").as_ptr(),
+        -s(15), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, w!("Segoe UI"),
     );
     let f_link = CreateFontW(
-        -s(15), 0, 0, 0, 400, 0, 1, 0, 1, 0, 0, 5, 0, wide("Segoe UI").as_ptr(),
+        -s(15), 0, 0, 0, 400, 0, 1, 0, 1, 0, 0, 5, 0, w!("Segoe UI"),
     );
     DLG_FONT_TITLE.store(f_title, Ordering::SeqCst);
     DLG_FONT_TEXT.store(f_text, Ordering::SeqCst);
@@ -500,6 +500,8 @@ unsafe extern "system" fn dialog_wnd_proc(
                     DeleteObject(h);
                 }
             }
+            // 다이얼로그가 건드린 GDI/컨트롤 페이지를 다시 idle 로 돌려보낸다(작업 집합 복귀).
+            crate::win32::trim_working_set();
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -508,11 +510,11 @@ unsafe extern "system" fn dialog_wnd_proc(
 
 /// 시스템 기본 브라우저로 URL 을 연다.
 unsafe fn open_url(url: &str) {
-    let op = wide("open");
+    let op = w!("open");
     let u = wide(url);
     ShellExecuteW(
         ptr::null_mut(),
-        op.as_ptr(),
+        op,
         u.as_ptr(),
         ptr::null(),
         ptr::null(),

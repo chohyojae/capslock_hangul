@@ -5,6 +5,7 @@
 use std::ptr;
 
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
 use windows_sys::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
@@ -28,6 +29,20 @@ pub fn set_dpi_aware() {
     // SAFETY: 인자는 상수 컨텍스트 핸들이며, 반환값(성공 여부)은 무시한다.
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+}
+
+/// 현재 프로세스의 작업 집합(working set)을 트림한다.
+///
+/// `SetProcessWorkingSetSize(proc, (SIZE_T)-1, (SIZE_T)-1)` 은 "최소 크기로 줄여라"를
+/// 뜻하는 표준 관용구로, 안 쓰는 페이지를 standby 목록으로 내려 보고되는 메모리를 낮춘다.
+/// 상주 트레이 앱처럼 초기화 후 대부분 idle 인 프로세스에서 효과적이다. 페이지는 필요 시
+/// 자동으로 다시 fault-in 되므로 동작 정확성에는 영향이 없다. 실패해도 무해(무시).
+pub fn trim_working_set() {
+    // SAFETY: GetCurrentProcess 는 의사 핸들을 돌려주고, (usize::MAX, usize::MAX) =
+    // (SIZE_T)-1 은 문서화된 "최소로 트림" 신호다. 반환값(성공 여부)은 무시한다.
+    unsafe {
+        SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
     }
 }
 

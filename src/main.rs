@@ -2,6 +2,9 @@
 // 디버그 빌드에서는 콘솔을 유지하여 로그를 확인할 수 있다.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[macro_use]
+mod wide; // w! 매크로를 다른 모듈보다 먼저 선언해 크레이트 전역에서 쓰게 한다.
+
 mod config;
 mod hook;
 mod ime;
@@ -71,6 +74,12 @@ fn main() {
     }
 
     logging::log("caps-hangul-rs 실행 중. 트레이 아이콘 우클릭 → Exit 또는 프로세스 종료.");
+
+    // 3-4. 초기화로 작업 집합에 올라온 1회성 페이지(std/GDI 초기화 등)를 idle 진입 직전에
+    //      비운다. 상주 트레이 앱은 대부분 idle 이라, 안 쓰는 페이지를 standby 로 내려
+    //      보고되는 메모리(작업 집합)를 최소로 유지한다. 필요한 페이지는 자동으로 다시
+    //      fault-in 되므로 정확성에는 영향이 없다(다음 상호작용이 미세하게만 느려질 수 있음).
+    win32::trim_working_set();
 
     // 4. 메시지 루프 (§10.2) — idle 상태에서 CPU 사용률은 사실상 0%.
     win32::run_message_loop();

@@ -92,11 +92,6 @@ static MAP_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static SHARED_VIEW: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static EVENT_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
-/// UTF-8 → 널 종료 UTF-16.
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(once(0)).collect()
-}
-
 /// 본체(이 exe) 자신의 아키텍처 접미사.
 fn own_arch() -> &'static str {
     if cfg!(target_arch = "x86") {
@@ -170,14 +165,13 @@ unsafe fn load_dll() -> Option<*mut c_void> {
 pub fn init() -> bool {
     // SAFETY: 표준 매핑/이벤트 생성 시퀀스. 실패 경로마다 정리한다.
     unsafe {
-        let map_name = wide(MAP_NAME);
         let hmap = CreateFileMappingW(
             INVALID_HANDLE_VALUE,
             ptr::null(),
             PAGE_READWRITE,
             0,
             size_of::<Shared>() as u32,
-            map_name.as_ptr(),
+            w!(MAP_NAME),
         );
         if hmap.is_null() {
             logging::log("IME 리더 공유 메모리 생성 실패");
@@ -192,9 +186,8 @@ pub fn init() -> bool {
         }
         ptr::write_bytes(view.Value as *mut u8, 0, size_of::<Shared>());
 
-        let evt_name = wide(EVT_NAME);
         // auto-reset(manual=false), 초기 non-signaled.
-        let hevt = CreateEventW(ptr::null(), 0, 0, evt_name.as_ptr());
+        let hevt = CreateEventW(ptr::null(), 0, 0, w!(EVT_NAME));
         if hevt.is_null() {
             UnmapViewOfFile(view);
             CloseHandle(hmap);

@@ -12,13 +12,16 @@ fn main() {
         return;
     }
 
-    // assets/caps_lock_icon.ico(워크스페이스 루트)를 헬퍼 exe 에도 임베드 → 본체와 동일한 아이콘.
+    // 아이콘은 임베드하지 않는다: 이 헬퍼는 CREATE_NO_WINDOW 로 뜨는 헤드리스 브로커라
+    // 트레이/창/다이얼로그가 없어 아이콘을 화면에 표시할 일이 없다. 36 KB 아이콘을 빼
+    // 이미지 크기를 줄인다(버전 정보 "자세히" 탭은 그대로 유지). 본체 exe 는 트레이/
+    // 다이얼로그/작업표시줄에서 아이콘이 필요하므로 종전대로 임베드한다.
     embed_version_info(
         "Caps Hangul injection helper (per-arch broker)",
         "caps-hangul-reader",
         "caps-hangul-reader.exe",
         "0x1L", // VFT_APP
-        Some("../../assets/caps_lock_icon.ico"),
+        None,
     );
 }
 

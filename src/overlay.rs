@@ -93,11 +93,6 @@ static PREREAD: AtomicU32 = AtomicU32::new(0);
 /// 추정 누적이 아니므로 외부 변경이 있어도 다음 토글에서 자동으로 맞춰진다.
 static CAPS_ON: AtomicBool = AtomicBool::new(false);
 
-/// UTF-8 → 널 종료 UTF-16.
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
 /// 현재 OS Caps Lock 토글 상태(true=ON)를 실제로 읽는다.
 ///
 /// `GetKeyState` 의 **lock(low) 비트**는 눌림(high) 비트와 달리 전역 토글 상태를 반영하므로,
@@ -116,7 +111,7 @@ pub fn init() -> Result<(), u32> {
     // Caps Lock 표시 캐시를 실제 토글 상태로 seed(이후 매 토글마다 실제값을 다시 읽는다).
     CAPS_ON.store(caps_lock_on(), Ordering::SeqCst);
 
-    let class_name = wide("CapsHangulOverlayWindow");
+    let class_name = w!("CapsHangulOverlayWindow");
 
     // SAFETY: 표준 윈도우 클래스 등록 + 창 생성 시퀀스.
     unsafe {
@@ -125,7 +120,7 @@ pub fn init() -> Result<(), u32> {
         let mut wc: WNDCLASSW = std::mem::zeroed();
         wc.lpfnWndProc = Some(wnd_proc);
         wc.hInstance = hinstance;
-        wc.lpszClassName = class_name.as_ptr();
+        wc.lpszClassName = class_name;
         // hbrBackground 는 null: 배경 지우기를 직접 WM_PAINT 에서 처리한다.
         if RegisterClassW(&wc) == 0 {
             return Err(windows_sys::Win32::Foundation::GetLastError());
@@ -139,8 +134,8 @@ pub fn init() -> Result<(), u32> {
 
         let hwnd = CreateWindowExW(
             ex_style,
-            class_name.as_ptr(),
-            wide("Caps Hangul Overlay").as_ptr(),
+            class_name,
+            w!("Caps Hangul Overlay"),
             WS_POPUP,
             0,
             0,
@@ -247,14 +242,14 @@ fn metrics_96(label: u32) -> (i32, i32, i32, i32, bool) {
     }
 }
 
-/// 라벨 코드에 대응하는 표시 텍스트.
-fn label_text(label: u32) -> &'static str {
+/// 라벨 코드에 대응하는 표시 텍스트(컴파일 타임 널 종료 UTF-16 포인터, 힙 할당 없음).
+fn label_wide(label: u32) -> *const u16 {
     match label {
-        LBL_HANGUL => "한",
-        LBL_ENGLISH => "A",
-        LBL_CAPS_ON => "CAPS ON",
-        LBL_CAPS_OFF => "CAPS OFF",
-        _ => "",
+        LBL_HANGUL => w!("한"),
+        LBL_ENGLISH => w!("A"),
+        LBL_CAPS_ON => w!("CAPS ON"),
+        LBL_CAPS_OFF => w!("CAPS OFF"),
+        _ => w!(""),
     }
 }
 
@@ -298,14 +293,13 @@ unsafe fn show_label(hwnd: *mut c_void, label: u32) {
     let x = rc.left + ((rc.right - rc.left) - w) / 2;
     let y = rc.top + ((rc.bottom - rc.top) - h) / 2;
 
-    // 폰트 (DPI 에 맞춰 새로 생성, 이전 폰트 해제).
-    let face = if hangul_font { "Malgun Gothic" } else { "Segoe UI" };
-    let face_w = wide(face);
+    // 폰트 (DPI 에 맞춰 새로 생성, 이전 폰트 해제). face 는 컴파일 타임 UTF-16(할당 없음).
+    let face_w = if hangul_font { w!("Malgun Gothic") } else { w!("Segoe UI") };
     // 인자: height(-px), width, escapement, orientation, weight(600=SemiBold),
     //       italic, underline, strikeout, charset(1=DEFAULT),
     //       outprec(0), clipprec(0), quality(5=CLEARTYPE), pitch&family(0), facename
     let font: HFONT = CreateFontW(
-        -font_px, 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, face_w.as_ptr(),
+        -font_px, 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, face_w,
     );
     let old_font = OVERLAY_FONT.swap(font, Ordering::SeqCst);
     if !old_font.is_null() {
@@ -389,10 +383,10 @@ unsafe fn paint(hwnd: *mut c_void) {
     SetBkMode(hdc, TRANSPARENT as i32);
     SetTextColor(hdc, rgb(255, 255, 255));
 
-    let mut text = wide(label_text(CURRENT_LABEL.load(Ordering::SeqCst)));
+    let text = label_wide(CURRENT_LABEL.load(Ordering::SeqCst));
     DrawTextW(
         hdc,
-        text.as_mut_ptr(),
+        text,
         -1,
         &mut rc,
         DT_CENTER | DT_VCENTER | DT_SINGLELINE,
