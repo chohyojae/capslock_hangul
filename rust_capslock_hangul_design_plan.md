@@ -524,8 +524,8 @@ LICENSE
 
 ```text
 caps-hangul.toml
-install-startup.ps1
-uninstall-startup.ps1
+install-startup.cmd
+uninstall-startup.cmd
 ```
 
 ### 13.5 파일 속성 (버전 정보) — 현재 구현
@@ -557,11 +557,11 @@ uninstall-startup.ps1
 shell:startup
 ```
 
-### 14.2 PowerShell 설치 스크립트 (작업 스케줄러 — 현재 구현)
+### 14.2 하이브리드 CMD/PowerShell 설치 스크립트 (작업 스케줄러 — 현재 구현)
 
 릴리스 빌드가 관리자 권한(`requireAdministrator`, §16.2)으로 실행되므로, Startup 폴더 바로가기나
-`HKCU\...\Run` 으로 자동 시작하면 **로그온마다 UAC 동의창**이 뜬다. 이를 피하려고 `install-startup.ps1`
-/ `uninstall-startup.ps1` 은 **작업 스케줄러**에 작업을 등록/해제한다.
+`HKCU\...\Run` 으로 자동 시작하면 **로그온마다 UAC 동의창**이 뜬다. 이를 피하려고 `install-startup.cmd`
+/ `uninstall-startup.cmd` 은 **작업 스케줄러**에 작업을 등록/해제한다.
 
 - 트리거: **로그온 시**(`New-ScheduledTaskTrigger -AtLogOn -User <현재 사용자>`)
 - 원칙: 현재 사용자, **가장 높은 권한**(`New-ScheduledTaskPrincipal -LogonType Interactive -RunLevel Highest`)

@@ -23,9 +23,9 @@
       caps-hangul-reader-x86.exe       \
       caps-hangul-reader-x64.exe        > 세 비트니스 주입 헬퍼
       caps-hangul-reader-arm64.exe     /
-      install-startup.ps1
-      uninstall-startup.ps1
-      README.md
+      install-startup.cmd
+      uninstall-startup.cmd
+      USAGE.md
       LICENSE
 
 .PARAMETER Arch
@@ -111,13 +111,17 @@ $null = New-Item -ItemType Directory -Path $DistRoot -Force
 function Copy-Checked {
     param([string]$Src, [string]$Dst)
     if (-not (Test-Path $Src)) { throw "Missing artifact: $Src" }
-    Copy-Item $Src $Dst
+    try {
+        Copy-Item $Src $Dst -Force
+    } catch {
+        Write-Warning "Failed to copy $($Src) to $($Dst): $_"
+    }
 }
 
 foreach ($m in $MainArches) {
     $pkgName = "caps-hangul-$m"
     $pkgDir = Join-Path $DistRoot $pkgName
-    if (Test-Path $pkgDir) { Remove-Item $pkgDir -Recurse -Force }
+    if (Test-Path $pkgDir) { Remove-Item $pkgDir -Recurse -Force -ErrorAction SilentlyContinue }
     $null = New-Item -ItemType Directory -Path $pkgDir -Force
 
     # 본체 exe
@@ -132,9 +136,15 @@ foreach ($m in $MainArches) {
     }
 
     # 설치 스크립트 + 문서
-    foreach ($extra in 'install-startup.ps1', 'uninstall-startup.ps1', 'README.md', 'LICENSE') {
+    foreach ($extra in 'install-startup.cmd', 'uninstall-startup.cmd', 'USAGE.md', 'LICENSE') {
         $src = Join-Path $PSScriptRoot $extra
-        if (Test-Path $src) { Copy-Item $src (Join-Path $pkgDir $extra) }
+        if (Test-Path $src) {
+            try {
+                Copy-Item $src (Join-Path $pkgDir $extra) -Force
+            } catch {
+                Write-Warning "Failed to copy extra file $($extra): $_"
+            }
+        }
     }
 
     Write-Host "    Package: $pkgDir" -ForegroundColor Green

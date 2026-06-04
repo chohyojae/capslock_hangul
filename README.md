@@ -94,8 +94,8 @@ dist\caps-hangul-x64\
   caps-hangul.exe                (본체, x64)
   caps-hangul-tsf-x86.dll        caps-hangul-tsf-x64.dll    caps-hangul-tsf-arm64.dll
   caps-hangul-reader-x86.exe     caps-hangul-reader-x64.exe caps-hangul-reader-arm64.exe
-  install-startup.ps1
-  uninstall-startup.ps1
+  install-startup.cmd
+  uninstall-startup.cmd
   README.md
   LICENSE
 ```
@@ -261,10 +261,10 @@ memory 에 결과를 쓴다(레이아웃이 모두 4바이트 고정이라 비�
 
 ```powershell
 # 등록 (작업 스케줄러에 "로그온 시 + 가장 높은 권한" 작업 생성)
-.\install-startup.ps1
+.\install-startup.cmd
 
 # 해제
-.\uninstall-startup.ps1
+.\uninstall-startup.cmd
 ```
 
 릴리스 빌드는 관리자 권한을 요구하므로, Startup 폴더 바로가기로 자동 시작하면 **로그온마다 UAC
@@ -273,7 +273,7 @@ memory 에 결과를 쓴다(레이아웃이 모두 4바이트 고정이라 비�
 
 - 작업 등록/해제 자체에는 관리자 권한이 필요하므로, 스크립트가 **설치 시 1회 UAC**로 자기 자신을
   관리자 권한으로 재실행한다(이후 로그온 자동 시작에는 UAC 가 없다).
-- `install-startup.ps1` 은 exe 옆에 짝 DLL 이 있는지도 확인해(없으면 경고) 한/영 라벨이 추정값
+- `install-startup.cmd` 은 exe 옆에 짝 DLL 이 있는지도 확인해(없으면 경고) 한/영 라벨이 추정값
   폴백으로만 동작하는 상황을 알려 주고, 구버전 Startup 폴더 바로가기가 있으면 정리한다(중복 실행 방지).
 - 등록 직후 바로 시작하려면: `Start-ScheduledTask -TaskName 'Caps Hangul'`
 
