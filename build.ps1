@@ -59,6 +59,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
+# Cargo.toml에서 버전 추출
+$cargoContent = Get-Content (Join-Path $PSScriptRoot "Cargo.toml") -Raw
+if ($cargoContent -match '(?m)^version\s*=\s*"([^"]+)"') {
+    $Version = $Matches[1]
+} else {
+    throw "Failed to parse version from Cargo.toml"
+}
+
 # 아키텍처 접미사 → rustc target triple
 $Triple = @{
     'x86'   = 'i686-pc-windows-msvc'
@@ -73,7 +81,7 @@ $Components = @('x86', 'x64', 'arm64')
 if (-not $Arch) {
     $os = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
     $Arch = if ($os -eq 'Arm64') { 'arm64' } else { 'x64' }
-    Write-Host "본체 패키지 대상 미지정 → 현재 PC 아키텍처 '$Arch' 사용" -ForegroundColor DarkGray
+    Write-Host "Target architecture not specified -> using current PC architecture '$Arch'" -ForegroundColor DarkGray
 }
 $MainArches = if ($Arch -eq 'all') { @('x64', 'arm64') } else { @($Arch) }
 
@@ -82,18 +90,18 @@ function Invoke-Cargo {
     Write-Host "==> cargo $($CargoArgs -join ' ')" -ForegroundColor Cyan
     & cargo @CargoArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "$What 빌드 실패 (exit $LASTEXITCODE). 'rustup target add <triple>' 와 해당 VS 빌드 도구 설치를 확인하세요."
+        throw "Failed to build $What (exit $LASTEXITCODE). Please verify 'rustup target add <triple>' and check that corresponding VS build tools are installed."
     }
 }
 
 # 1) 컴포넌트(리더 DLL + 헬퍼) 세 비트니스 빌드.
 foreach ($c in $Components) {
-    Invoke-Cargo @('build', '--release', '-p', 'caps-hangul-tsf', '-p', 'caps-hangul-reader', '--target', $Triple[$c]) "[$c] 컴포넌트"
+    Invoke-Cargo @('build', '--release', '-p', 'caps-hangul-tsf', '-p', 'caps-hangul-reader', '--target', $Triple[$c]) "[$c] component"
 }
 
 # 2) 본체 exe(패키지 대상 비트니스) 빌드.
 foreach ($m in $MainArches) {
-    Invoke-Cargo @('build', '--release', '-p', 'caps-hangul-rs', '--target', $Triple[$m]) "[$m] 본체 exe"
+    Invoke-Cargo @('build', '--release', '-p', 'caps-hangul-rs', '--target', $Triple[$m]) "[$m] main exe"
 }
 
 # 3) 패키지 조립.
@@ -102,7 +110,7 @@ $null = New-Item -ItemType Directory -Path $DistRoot -Force
 
 function Copy-Checked {
     param([string]$Src, [string]$Dst)
-    if (-not (Test-Path $Src)) { throw "산출물 누락: $Src" }
+    if (-not (Test-Path $Src)) { throw "Missing artifact: $Src" }
     Copy-Item $Src $Dst
 }
 
@@ -129,15 +137,15 @@ foreach ($m in $MainArches) {
         if (Test-Path $src) { Copy-Item $src (Join-Path $pkgDir $extra) }
     }
 
-    Write-Host "    패키지: $pkgDir" -ForegroundColor Green
+    Write-Host "    Package: $pkgDir" -ForegroundColor Green
 
     if ($Zip) {
-        $zipPath = Join-Path $DistRoot "$pkgName.zip"
+        $zipPath = Join-Path $DistRoot "$pkgName-$Version.zip"
         if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
         Compress-Archive -Path (Join-Path $pkgDir '*') -DestinationPath $zipPath
-        Write-Host "    압축:   $zipPath" -ForegroundColor Green
+        Write-Host "    Zip:     $zipPath" -ForegroundColor Green
     }
 }
 
 Write-Host ""
-Write-Host "완료. 배포물 위치: $DistRoot" -ForegroundColor Green
+Write-Host "Done. Distribution location: $DistRoot" -ForegroundColor Green
