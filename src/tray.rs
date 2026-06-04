@@ -307,7 +307,7 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
         left: 0,
         top: 0,
         right: s(440),
-        bottom: s(280),
+        bottom: s(258),
     };
     AdjustWindowRectExForDpi(&mut rc, win_style, 0, win_ex, dpi_x);
     let ww = rc.right - rc.left;
@@ -414,9 +414,8 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
     let license = "MIT License\r\nCopyright © 2026 Hyojae Cho";
     let lic_ctl = mk("STATIC", license, 0, s(m), s(100), s(inner_w), s(44), 0);
 
-    // GitHub 저장소 라벨 + 하이퍼링크.
-    let gh_ctl = mk("STATIC", "GitHub repository", 0, s(m), s(158), s(inner_w), s(20), 0);
-    let link = mk("STATIC", REPO_URL, SS_NOTIFY, s(m), s(180), s(inner_w), s(22), ID_LINK);
+    // GitHub 저장소 하이퍼링크.
+    let link = mk("STATIC", REPO_URL, SS_NOTIFY, s(m), s(158), s(inner_w), s(22), ID_LINK);
     LINK_HWND.store(link, Ordering::SeqCst);
 
     // 닫기 버튼(기본 버튼 → Enter, IDCANCEL → Esc).
@@ -426,7 +425,7 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
         "Close",
         BS_DEFPUSHBUTTON | WS_TABSTOP,
         s((440 - btn_w) / 2),
-        s(230),
+        s(208),
         s(btn_w),
         s(30),
         ID_CLOSE,
@@ -436,7 +435,6 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
     SendMessageW(title_ctl, WM_SETFONT, f_title as usize, 1);
     SendMessageW(ver_ctl, WM_SETFONT, f_text as usize, 1);
     SendMessageW(lic_ctl, WM_SETFONT, f_text as usize, 1);
-    SendMessageW(gh_ctl, WM_SETFONT, f_text as usize, 1);
     SendMessageW(link, WM_SETFONT, f_link as usize, 1);
     SendMessageW(btn, WM_SETFONT, f_text as usize, 1);
 
