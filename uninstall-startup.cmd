@@ -47,10 +47,3 @@ if ($Task) {
 } else {
     Write-Host "No registered task found: '$TaskName'"
 }
-
-# 구버전 Startup 폴더 바로가기도 함께 정리한다(이전 버전에서 등록했을 수 있음).
-$LegacyLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Caps Hangul.lnk'
-if (Test-Path $LegacyLnk) {
-    Remove-Item $LegacyLnk -Force
-    Write-Host "Removed legacy Startup shortcut: $LegacyLnk"
-}

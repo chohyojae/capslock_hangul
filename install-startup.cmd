@@ -99,13 +99,6 @@ Register-ScheduledTask -TaskName $TaskName `
     -Description 'Caps Lock 한/영 전환 유틸리티 (로그온 시 관리자 권한으로 자동 시작)' `
     -Force | Out-Null
 
-# 구버전 Startup 폴더 바로가기가 있으면 정리한다(작업 스케줄러와 중복 실행 방지).
-$LegacyLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Caps Hangul.lnk'
-if (Test-Path $LegacyLnk) {
-    Remove-Item $LegacyLnk -Force
-    Write-Host "Removed legacy Startup shortcut: $LegacyLnk"
-}
-
 Write-Host ""
 Write-Host "Registered Task Scheduler task '$TaskName'"
 Write-Host "  Run     : $TargetPath"
