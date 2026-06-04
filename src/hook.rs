@@ -93,6 +93,14 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 // 누른 채 임계 시간을 넘기면 떼기 전에 길게 누름(Caps 토글+오버레이)을 확정한다.
                 let threshold = state::THRESHOLD_MS.load(Ordering::SeqCst);
                 overlay::arm_caps_long_press(threshold as u32);
+
+                // 짧게 누름(한/영) 대비: 누르고 있는 동안(dwell) 실제 IME 상태를 미리 읽어 둔다.
+                // 떼는 순간의 전환 키 전송은 아래 KeyUp 콜백에서 즉시 하고, 라벨만 이 사전조회
+                // 결과로 표시한다. 느린 IME 조회를 전환 직전이 아니라 dwell 안으로 숨겨, 떼자마자
+                // 빠르게 타이핑해도 첫 글자가 전환 전에 입력되지 않게 한다.
+                if state::SHORT_PRESS_VK.load(Ordering::SeqCst) == VK_HANGUL && overlay::is_ready() {
+                    overlay::request_language_preread();
+                }
             }
             1 // non-zero: 원래 Caps Lock KeyDown 차단
         }
@@ -129,14 +137,15 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     input::send_key(vk);
                 }
                 PressKind::Short => {
-                    // 한/영(VK_HANGUL)일 때는 오버레이 핸들러가 (실제 IME 조회 → 키 전송 →
-                    // 표시) 순서로 처리하도록 위임한다. 그래야 라벨이 실제 상태와 일치한다.
-                    // 오버레이 미준비/커스텀 키일 때는 콜백에서 직접 전송(폴백).
+                    // 떼는 순간 콜백 안에서 전환 키를 **즉시 전송**한다(임계 경로에서 IME 조회
+                    // 지연을 제거). SendInput 은 이 KeyUp 콜백 안에서 끝나므로, 전환이 사용자의
+                    // 다음 물리 키보다 확실히 앞서 입력 큐에 들어간다.
+                    // 한/영(VK_HANGUL)이고 오버레이 준비 시, 라벨은 KeyDown 사전조회 결과로
+                    // 핸들러가 표시한다(전송은 여기서 이미 끝났으므로 핸들러는 표시 전담).
                     let vk = state::SHORT_PRESS_VK.load(Ordering::SeqCst);
+                    input::send_key(vk);
                     if vk == VK_HANGUL && overlay::is_ready() {
-                        overlay::request_language_toggle();
-                    } else {
-                        input::send_key(vk);
+                        overlay::request_language_show();
                     }
                 }
             }

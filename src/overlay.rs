@@ -6,13 +6,16 @@
 //! ## 설계 요점
 //! - 전용 레이어드 창(click-through, no-activate, topmost)을 메인 스레드에 미리 만들어 둔다.
 //! - 훅 콜백에서는 atomic 갱신 + `PostMessage` 만 하고 즉시 반환한다(콜백 내 I/O 금지 §16.4).
-//! - **언어(한/영) 라벨은 "확인 후 표시"** 한다:
-//!   1. 토글 키를 **콜백이 아닌 오버레이 핸들러**에서 보낸다([`request_language_toggle`]).
-//!   2. 핸들러는 키를 보내기 **직전에** 실제 IME 변환 모드를 조회한다(아직 아무것도
-//!      주입하지 않았으므로 신뢰할 수 있는 현재 상태).
-//!   3. `VK_HANGUL` 전송 후 결과(= `!이전상태`)로 **한 번에** 올바른 라벨을 띄운다.
-//!   → 추정 표시 후 보정하던 방식의 중간 깜빡임이 없고, IME 로 직접 전환한 뒤에도
-//!     매번 실제 상태를 새로 읽으므로 라벨이 어긋나지 않는다.
+//! - **언어(한/영) 전환은 "떼는 즉시", 라벨은 "사전조회 후 표시"** 한다:
+//!   1. `VK_HANGUL` 전송은 **떼는 순간 훅 콜백에서 즉시**(SendInput) 한다 — 전환이
+//!      다음 물리 키보다 확실히 앞서 입력 큐에 들어가므로, 떼자마자 빠르게 타이핑해도
+//!      첫 글자가 전환 전에 입력되는 일이 없다.
+//!   2. 라벨용 실제 IME 변환 모드 조회는 **누르고 있는 동안(dwell)** 미리 해 둔다
+//!      ([`request_language_preread`]). 느릴 수 있는 이 조회를 전환 직전(임계 경로)에서
+//!      빼고 dwell 시간 안으로 숨기는 것이 핵심이다(단일 스레드라 사전조회는 KeyUp
+//!      콜백보다 먼저 처리되어 캐시는 항상 "전송 전" 상태를 담는다).
+//!   3. 떼는 순간([`request_language_show`])엔 사전조회 결과(전송 전 상태)의 부정으로
+//!      올바른 라벨을 **한 번에** 띄운다(중간 깜빡임 없음). 조회 실패 시 추정값 폴백.
 //! - **Caps Lock 라벨**도 동일하게 토글 키 전송 **직전 실제 토글 상태**를 읽어 결정한다.
 //!   (`GetKeyState` 의 lock 비트는 포커스 없는 백그라운드 스레드에서도 전역 상태를 반영한다.)
 //!   매번 새로 읽으므로 권한 격리(UIPI)로 주입이 무시되거나 화면 키보드·원격 세션 등으로
@@ -56,8 +59,10 @@ const LBL_CAPS_OFF: u32 = 4; // "CAPS OFF"
 // ── 윈도우 메시지 / 타이머 ID ────────────────────────────────────────────────
 /// 라벨을 그대로 표시(Caps 즉시 표시용). wParam=라벨 코드.
 const WM_APP_SHOW: u32 = WM_APP;
-/// 언어 전환: 핸들러가 (IME 조회 → VK_HANGUL 전송 → 표시) 순서로 처리.
-const WM_APP_LANG: u32 = WM_APP + 1;
+/// 한/영 사전조회: KeyDown 시 dwell 동안 실제 IME 상태를 미리 읽어 캐시한다.
+const WM_APP_LANG_PREREAD: u32 = WM_APP + 1;
+/// 한/영 라벨 표시: KeyUp(짧게) 시 — 전환 키 전송은 콜백에서 이미 끝났고 라벨만 띄운다.
+const WM_APP_LANG_SHOW: u32 = WM_APP + 2;
 const TIMER_HOLD: usize = 1; // 표시 유지 후 페이드 시작
 const TIMER_FADE: usize = 2; // 알파를 단계적으로 줄여 숨김
 const TIMER_CAPS: usize = 3; // Caps Lock 임계 시간 도달 감지(누르고 있는 동안)
@@ -80,6 +85,10 @@ static FADE_ALPHA: AtomicU32 = AtomicU32::new(0);
 
 /// 한/영 추정 상태(true=한글). IME 조회가 실패할 때만 폴백으로 사용.
 static LANG_HANGUL: AtomicBool = AtomicBool::new(false);
+/// KeyDown 사전조회 결과(전송 전 상태). 0=미확정, 1=한글, 2=영문.
+/// KeyUp 의 라벨 표시가 `swap(0)` 으로 소비하며, 매 KeyDown 이 항상 새로 덮어써
+/// (긴 누름 등으로) 소비되지 못한 이전 값이 다음 짧게 누름에 새지 않게 한다.
+static PREREAD: AtomicU32 = AtomicU32::new(0);
 /// Caps Lock 표시 캐시(true=ON). 길게 누름마다 **실제 토글 상태를 다시 읽어** 갱신한다.
 /// 추정 누적이 아니므로 외부 변경이 있어도 다음 토글에서 자동으로 맞춰진다.
 static CAPS_ON: AtomicBool = AtomicBool::new(false);
@@ -159,18 +168,39 @@ pub fn is_ready() -> bool {
     !OVERLAY_HWND.load(Ordering::SeqCst).is_null()
 }
 
-/// 한/영 전환 요청. **훅 콜백에서 호출**하며, 실제 IME 조회·키 전송·표시는
-/// 오버레이 핸들러(WM_APP_LANG)가 콜백 밖에서 수행한다.
+/// 한/영 사전조회 요청. **KeyDown 시 훅 콜백에서 호출**한다.
+///
+/// 메시지 루프가 dwell(키를 누르고 있는 동안) 실제 IME 변환 모드를 미리 읽어 캐시한다.
+/// 떼는 순간의 전환 키 전송은 호출 측(훅)이 콜백에서 즉시 처리하므로, 느릴 수 있는 이
+/// 조회는 전환 직전(임계 경로)에서 빠진다. 단일 스레드 모델이라 이 사전조회는 KeyUp
+/// 콜백보다 먼저 처리되어, 캐시는 항상 "전송 전" 상태를 담는다.
 ///
 /// 호출 측은 [`is_ready`] 가 true 이고 단축키가 `VK_HANGUL` 일 때만 호출한다.
-pub fn request_language_toggle() {
+pub fn request_language_preread() {
     let hwnd = OVERLAY_HWND.load(Ordering::SeqCst);
     if hwnd.is_null() {
         return;
     }
     // SAFETY: 유효한 창. PostMessage 는 콜백에서 안전.
     unsafe {
-        PostMessageW(hwnd, WM_APP_LANG, 0, 0);
+        PostMessageW(hwnd, WM_APP_LANG_PREREAD, 0, 0);
+    }
+}
+
+/// 한/영 라벨 표시 요청. **KeyUp(짧게) 시 훅 콜백에서 호출**한다(전환 키 전송 직후).
+///
+/// 토글은 이미 콜백에서 끝났으므로, 핸들러는 사전조회 캐시(전송 전 상태)로 결과
+/// 라벨만 표시한다.
+///
+/// 호출 측은 [`is_ready`] 가 true 이고 단축키가 `VK_HANGUL` 일 때만 호출한다.
+pub fn request_language_show() {
+    let hwnd = OVERLAY_HWND.load(Ordering::SeqCst);
+    if hwnd.is_null() {
+        return;
+    }
+    // SAFETY: 유효한 창. PostMessage 는 콜백에서 안전.
+    unsafe {
+        PostMessageW(hwnd, WM_APP_LANG_SHOW, 0, 0);
     }
 }
 
@@ -299,23 +329,35 @@ unsafe fn show_label(hwnd: *mut c_void, label: u32) {
     SetTimer(hwnd, TIMER_HOLD, HOLD_MS, None);
 }
 
-/// WM_APP_LANG: 실제 IME 상태를 **먼저 확인한 뒤** 토글하고 올바른 라벨로 표시한다.
-unsafe fn handle_language_toggle(hwnd: *mut c_void) {
-    // 1) 토글 직전 실제 한/영 상태를 포커스 스레드 주입 리더로 조회(아직 키 미주입 → 신뢰 가능).
-    //    Teams 등 TSF/Chromium 앱 포함 정확. 주입 불가/미초기화 시 None → 추정값 폴백.
-    let pre = crate::ime::read_focus_conversion();
+/// WM_APP_LANG_PREREAD: 전송 전 실제 한/영 상태를 읽어 캐시한다(dwell 동안 수행).
+///
+/// 포커스 스레드 주입 리더로 조회(아직 키 미주입 → 신뢰 가능). Teams 등 TSF/Chromium
+/// 앱 포함 정확. 주입 불가/미초기화 시 `None` → 0(미확정)으로 두어 표시 단계에서 폴백.
+unsafe fn handle_language_preread() {
+    let v = match crate::ime::read_focus_conversion() {
+        Some(true) => 1,  // 한글
+        Some(false) => 2, // 영문
+        None => 0,        // 미확정 → 폴백
+    };
+    PREREAD.store(v, Ordering::SeqCst);
+}
 
-    // 2) 한/영 토글 키 주입(핵심 동작).
-    input::send_key(state::SHORT_PRESS_VK.load(Ordering::SeqCst));
-
-    // 3) 결과 상태 = !이전상태. 조회 실패 시 내부 추정값을 폴백으로 토글.
-    let new_hangul = match pre {
-        Some(prev) => {
-            let now = !prev;
-            LANG_HANGUL.store(now, Ordering::SeqCst);
-            now
+/// WM_APP_LANG_SHOW: 전환 키 전송은 콜백에서 이미 끝났다. 사전조회 캐시(전송 전 상태)의
+/// 부정으로 결과를 구해 올바른 라벨을 한 번에 띄우고 추정값을 갱신한다.
+unsafe fn handle_language_show(hwnd: *mut c_void) {
+    let new_hangul = match PREREAD.swap(0, Ordering::SeqCst) {
+        1 => {
+            // 전송 전 한글 → 전송 후 영문.
+            LANG_HANGUL.store(false, Ordering::SeqCst);
+            false
         }
-        None => {
+        2 => {
+            // 전송 전 영문 → 전송 후 한글.
+            LANG_HANGUL.store(true, Ordering::SeqCst);
+            true
+        }
+        _ => {
+            // 사전조회 실패(미확정) → 내부 추정값을 토글해 폴백.
             let was = LANG_HANGUL.fetch_xor(true, Ordering::SeqCst);
             !was
         }
@@ -383,8 +425,12 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_APP_LANG => {
-            handle_language_toggle(hwnd);
+        WM_APP_LANG_PREREAD => {
+            handle_language_preread();
+            0
+        }
+        WM_APP_LANG_SHOW => {
+            handle_language_show(hwnd);
             0
         }
         WM_APP_SHOW => {
