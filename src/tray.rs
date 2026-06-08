@@ -22,30 +22,34 @@
 use core::ffi::c_void;
 use std::mem::size_of;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
-use windows_sys::Win32::Foundation::{COLORREF, GetLastError, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{
+    GetLastError, COLORREF, LPARAM, LRESULT, POINT, RECT, WPARAM,
+};
 use windows_sys::Win32::Graphics::Gdi::{
     CreateFontW, DeleteObject, GetMonitorInfoW, GetSysColorBrush, MonitorFromPoint, SetBkMode,
     SetTextColor, COLOR_WINDOW, MONITORINFO, MONITOR_DEFAULTTONEAREST, TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows_sys::Win32::UI::HiDpi::{
+    AdjustWindowRectExForDpi, GetDpiForMonitor, MDT_EFFECTIVE_DPI,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::Shell::{
-    Shell_NotifyIconW, ShellExecuteW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
+    ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
     NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
-    DestroyWindow, GetCursorPos, GetSystemMetrics, LoadCursorW, LoadIconW, LoadImageW,
-    PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW, SetCursor, SetForegroundWindow,
-    ShowWindow, TrackPopupMenu, HICON, ICON_BIG, ICON_SMALL, IDC_ARROW,
-    IDC_HAND, IMAGE_ICON, LR_DEFAULTCOLOR, MF_STRING, SM_CXSMICON, SM_CYSMICON, STM_SETICON,
-    SW_SHOW, SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND,
-    WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NCDESTROY, WM_NULL, WM_RBUTTONUP,
-    WM_SETCURSOR, WM_SETFONT, WM_SETICON, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME,
-    WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    DestroyWindow, GetCursorPos, GetSystemMetrics, KillTimer, LoadCursorW, LoadIconW, LoadImageW,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW, SetCursor,
+    SetForegroundWindow, SetTimer, ShowWindow, TrackPopupMenu, HICON, ICON_BIG, ICON_SMALL,
+    IDC_ARROW, IDC_HAND, IMAGE_ICON, LR_DEFAULTCOLOR, MF_STRING, SM_CXSMICON, SM_CYSMICON,
+    STM_SETICON, SW_SHOW, SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NCDESTROY, WM_NULL,
+    WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT, WM_SETICON, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_CHILD,
+    WS_EX_DLGMODALFRAME, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ── 트레이/메뉴/컨트롤 식별자 ────────────────────────────────────────────────
@@ -53,6 +57,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const WM_TRAY: u32 = WM_APP + 0x20;
 /// 트레이 아이콘 ID(창당 1개).
 const TRAY_UID: u32 = 1;
+/// 트레이 등록 재시도 타이머 ID.
+const TIMER_TRAY_RETRY: usize = 1;
+/// Explorer/알림 영역 준비를 기다리는 재시도 간격.
+const TRAY_RETRY_MS: u32 = 3_000;
 /// 컨텍스트 메뉴 명령 ID.
 const ID_INFO: u32 = 1001;
 const ID_EXIT: u32 = 1002;
@@ -76,6 +84,7 @@ const REPO_URL: &str = "https://github.com/chohyojae/capslock_hangul";
 static TRAY_HWND: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static TRAY_ICON: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static TRAY_ADDED: AtomicBool = AtomicBool::new(false);
+static TASKBAR_CREATED_MSG: AtomicU32 = AtomicU32::new(0);
 
 /// 열려 있는 정보 다이얼로그 핸들(없으면 null). 메시지 루프가 `IsDialogMessageW` 위임에 쓴다.
 static INFO_DLG: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -144,6 +153,13 @@ pub fn init() -> Result<(), u32> {
             return Err(GetLastError());
         }
 
+        // Explorer 가 재시작되면 기존 알림 영역 아이콘은 사라진다. Shell 이 브로드캐스트하는
+        // TaskbarCreated 를 받아 같은 아이콘을 다시 등록한다.
+        let taskbar_created = RegisterWindowMessageW(w!("TaskbarCreated"));
+        if taskbar_created != 0 {
+            TASKBAR_CREATED_MSG.store(taskbar_created, Ordering::SeqCst);
+        }
+
         // 숨김 트레이 창(표시 안 함) — 콜백 수신 + 메뉴/포그라운드 소유자.
         let hwnd = CreateWindowExW(
             0,
@@ -167,27 +183,63 @@ pub fn init() -> Result<(), u32> {
         // 임베드된 앱 아이콘(RT_GROUP_ICON id=1)을 트레이용 작은 아이콘으로 로드.
         let cx = GetSystemMetrics(SM_CXSMICON);
         let cy = GetSystemMetrics(SM_CYSMICON);
-        let mut hicon =
-            LoadImageW(hinstance, 1 as *const u16, IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR) as HICON;
+        let mut hicon = LoadImageW(
+            hinstance,
+            1 as *const u16,
+            IMAGE_ICON,
+            cx,
+            cy,
+            LR_DEFAULTCOLOR,
+        ) as HICON;
         if hicon.is_null() {
             hicon = LoadIconW(hinstance, 1 as *const u16); // 폴백(기본 크기).
         }
         TRAY_ICON.store(hicon, Ordering::SeqCst);
 
-        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-        nid.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = TRAY_UID;
-        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        nid.uCallbackMessage = WM_TRAY;
-        nid.hIcon = hicon;
-        set_sz(&mut nid.szTip, "caps-hangul-rs — Han/Eng · Caps Lock toggle");
-        if Shell_NotifyIconW(NIM_ADD, &nid) == 0 {
-            return Err(GetLastError());
-        }
-        TRAY_ADDED.store(true, Ordering::SeqCst);
+        retry_add_tray_icon(hwnd);
     }
     Ok(())
+}
+
+/// 현재 숨김 창/아이콘 핸들로 알림 영역 아이콘을 추가한다.
+unsafe fn add_tray_icon(hwnd: *mut c_void) -> Result<(), u32> {
+    let hicon = TRAY_ICON.load(Ordering::SeqCst);
+    if hicon.is_null() {
+        return Err(GetLastError());
+    }
+
+    let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+    nid.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = TRAY_UID;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAY;
+    nid.hIcon = hicon;
+    set_sz(
+        &mut nid.szTip,
+        "caps-hangul-rs — Han/Eng · Caps Lock toggle",
+    );
+    if Shell_NotifyIconW(NIM_ADD, &nid) == 0 {
+        return Err(GetLastError());
+    }
+    Ok(())
+}
+
+/// 알림 영역 준비 전 로그온 경합이나 Explorer 재시작 뒤 아이콘 유실을 복구한다.
+unsafe fn retry_add_tray_icon(hwnd: *mut c_void) {
+    if hwnd.is_null() || TRAY_ADDED.load(Ordering::SeqCst) {
+        return;
+    }
+
+    match add_tray_icon(hwnd) {
+        Ok(()) => {
+            TRAY_ADDED.store(true, Ordering::SeqCst);
+            KillTimer(hwnd, TIMER_TRAY_RETRY);
+        }
+        Err(_) => {
+            SetTimer(hwnd, TIMER_TRAY_RETRY, TRAY_RETRY_MS, None);
+        }
+    }
 }
 
 /// 트레이 아이콘을 제거하고 아이콘 핸들을 해제한다. 여러 번 호출해도 안전(idempotent).
@@ -220,6 +272,12 @@ unsafe extern "system" fn tray_wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == TASKBAR_CREATED_MSG.load(Ordering::SeqCst) {
+        TRAY_ADDED.store(false, Ordering::SeqCst);
+        retry_add_tray_icon(hwnd);
+        return 0;
+    }
+
     match msg {
         WM_TRAY => {
             // 클래식(v3) 콜백: lParam 하위 워드가 마우스 메시지.
@@ -233,6 +291,10 @@ unsafe extern "system" fn tray_wnd_proc(
         WM_DESTROY => {
             shutdown();
             PostQuitMessage(0);
+            0
+        }
+        WM_TIMER if wparam == TIMER_TRAY_RETRY => {
+            retry_add_tray_icon(hwnd);
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
