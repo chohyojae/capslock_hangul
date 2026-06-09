@@ -2,16 +2,15 @@
 
 <img src="assets/caps_lock_icon.png" alt="caps-hangul-rs 아이콘" width="1024">
 
-Windows 환경에서 macOS 의 Caps Lock 동작과 유사하게 동작하는 경량 Rust 유틸리티.
+Windows 환경에서 Caps Lock 키를 짧게 누르면 한/영 전환, 길게 누르면 Caps Lock 대/소문자 토글로 동작하게 해 주는 유틸리티.
 
 - **Caps Lock 짧게 누름** → 한/영 전환 (`VK_HANGUL`, 0x15)
 - **Caps Lock 길게 누름** (기본 400ms 이상) → Caps Lock 대/소문자 토글 (`VK_CAPITAL`, 0x14)
-- **전환 시 화면 중앙 안내 HUD** → macOS 처럼 한/영 전환 시 `한`/`A`, Caps Lock 토글 시
-  `CAPS ON`/`CAPS OFF` 가 활성 모니터 가운데에 잠깐 떴다 사라진다 (HiDPI 대응)
-- **Teams 등 TSF/Chromium 앱에서도 한/영 라벨이 정확** → 포커스 스레드에 잠깐 주입되는
+- **전환 시 화면 중앙 안내 HUD** → 한/영 전환 시 `한`/`A`, Caps Lock 토글 시 `CAPS ON`/`CAPS OFF` 상태를 활성 모니터 가운데에 짧게 표시.
+- **WebView2 등 TSF 앱에서도 한/영 라벨이 정확** → 포커스 스레드에 잠깐 주입되는
   TSF 리더 DLL 로 실제 IME 변환 모드를 읽는다 (아래 [IME 한/영 상태 정확 조회](#ime-한영-상태-정확-조회-tsf-리더-dll) 참조)
 
-AutoHotkey, PowerToys, .NET / Node.js 런타임 없이 단일 네이티브 `.exe`(+ 동봉 DLL)로 동작하며,
+별도의 런타임 의존성 없이 단일 네이티브 `.exe`(+ 동봉 DLL)로 동작하며,
 백그라운드에 상주하면서 낮은 메모리/CPU 사용량을 유지한다.
 
 자세한 설계는 [`rust_capslock_hangul_design_plan.md`](rust_capslock_hangul_design_plan.md) 참고.
@@ -311,6 +310,36 @@ memory 에 결과를 쓴다(레이아웃이 모두 4바이트 고정이라 비�
 | `crates/caps-hangul-tsf/` | 포커스 스레드에 주입되는 TSF 리더 DLL (x86/x64/arm64) |
 | `crates/caps-hangul-reader/` | 다른 비트니스 포커스용 주입 헬퍼(브로커) exe (x86/x64/arm64) |
 
-## 라이선스
+## 라이선스 및 법적 고지 (License & Legal Notices)
 
-[MIT License](LICENSE).
+### 1. 본 프로젝트 라이선스
+- 본 프로그램은 [MIT License](LICENSE) 에 따라 배포됨.
+- 어떠한 형태의 명시적, 묵시적 보증도 없이 "AS IS(있는 그대로의)" 형태로 제공됨.
+- Copyright (c) 2026 Hyojae Cho
+
+### 2. 외부 자산 및 오픈소스 라이브러리 라이선스
+- **폰트** : 
+  - **Cherry Bomb One** : 아이콘 이미지의 `Caps Lock` 문자열에 사용됨
+    - Copyright (c) The Cherry Bomb Project Authors
+    - SIL Open Font License, Version 1.1
+    - [satsuyako/CherryBomb](https://github.com/satsuyako/CherryBomb)
+- **외부 라이브러리** :
+  - **`windows` / `windows-sys`** : Windows API에 직접 액세스하기 위한 바인딩 라이브러리
+    - Copyright (c) Microsoft Corporation
+    - MIT License (or Apache License 2.0)
+    - [microsoft/windows-rs](https://github.com/microsoft/windows-rs)
+  - **`embed-manifest`** : Windows 실행 파일에 관리자 권한 요구 매니페스트를 임베드하기 위한 라이브러리
+    - Copyright (c) Carey Evans
+    - MIT License
+    - [carey/embed-manifest](https://codeberg.org/carey/embed-manifest)
+  - **`embed-resource`** : Windows 리소스 정보를 컴파일하여 링크하기 위한 라이브러리
+    - Copyright (c) nabijaczleweli
+    - MIT License
+    - [nabijaczleweli/rust-embed-resource](https://github.com/nabijaczleweli/rust-embed-resource)
+
+### 3. 상표권 및 권리 안내
+- 본 프로젝트는 macOS 사용자에게 익숙한 Caps Lock 한/영 전환 워크플로에서 영감을 받아 시작되었으나,
+  바이너리, 코드, 이미지, 폰트, 기타 Apple Inc.의 자산을 전혀 포함하지 않으며 Windows 환경에서 개발되고 Windows 환경에서 작동하도록 독립적으로 구현됨.
+- 본 프로젝트는 Apple Inc.의 승인을 받지 않았으며 개발자와 상호 관계사항이 없음.
+- `macOS`는 미국 및 기타 국가에 등록된 Apple Inc.의 상표임.
+- `Windows`, `WebView2`는 미국 및 기타 국가에 등록된 Microsoft Corporation의 상표임.
