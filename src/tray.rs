@@ -18,6 +18,9 @@
 //!   `STN_CLICKED`(WM_COMMAND). manifest 없는 디버그/릴리스 모두에서 동일하게 동작한다.
 //! - HiDPI: 프로세스가 Per-Monitor-V2 인식이므로(`win32::set_dpi_aware`), 대상 모니터 DPI 에
 //!   맞춰 창/컨트롤/폰트 크기를 스케일하고 `AdjustWindowRectExForDpi` 로 외곽 크기를 보정한다.
+//!   다이얼로그는 지속형 창이라 모니터 간 이동 시 `WM_GETDPISCALEDSIZE`(정확한 목표 외곽
+//!   크기 통보) + `WM_DPICHANGED`(제안 rect 적용 후 [`apply_dialog_dpi`] 로 폰트/아이콘/
+//!   컨트롤 재계산)로 배율 변경에 대응한다.
 
 use core::ffi::c_void;
 use std::mem::size_of;
@@ -25,10 +28,10 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use windows_sys::Win32::Foundation::{
-    GetLastError, COLORREF, LPARAM, LRESULT, POINT, RECT, WPARAM,
+    GetLastError, COLORREF, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateFontW, DeleteObject, GetMonitorInfoW, GetSysColorBrush, MonitorFromPoint, SetBkMode,
+    DeleteObject, GetMonitorInfoW, GetSysColorBrush, InvalidateRect, MonitorFromPoint, SetBkMode,
     SetTextColor, COLOR_WINDOW, MONITORINFO, MONITOR_DEFAULTTONEAREST, TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -42,14 +45,16 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
-    DestroyWindow, GetCursorPos, GetSystemMetrics, KillTimer, LoadCursorW, LoadIconW, LoadImageW,
-    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW, SetCursor,
-    SetForegroundWindow, SetTimer, ShowWindow, TrackPopupMenu, HICON, ICON_BIG, ICON_SMALL,
-    IDC_ARROW, IDC_HAND, IMAGE_ICON, LR_DEFAULTCOLOR, MF_STRING, SM_CXSMICON, SM_CYSMICON,
-    STM_SETICON, SW_SHOW, SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NCDESTROY, WM_NULL,
-    WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT, WM_SETICON, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_CHILD,
-    WS_EX_DLGMODALFRAME, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    DestroyWindow, GetCursorPos, GetDlgItem, GetSystemMetrics, KillTimer, LoadCursorW, LoadIconW,
+    LoadImageW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+    SendMessageW, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    TrackPopupMenu, HICON, ICON_BIG, ICON_SMALL, IDC_ARROW, IDC_HAND, IMAGE_ICON, LR_DEFAULTCOLOR,
+    MF_STRING, SM_CXSMICON, SM_CYSMICON, STM_SETICON, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW,
+    SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND,
+    WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_GETDPISCALEDSIZE, WM_LBUTTONDBLCLK,
+    WM_NCDESTROY, WM_NULL, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT, WM_SETICON, WM_TIMER,
+    WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 // ── 트레이/메뉴/컨트롤 식별자 ────────────────────────────────────────────────
@@ -65,8 +70,34 @@ const TRAY_RETRY_MS: u32 = 3_000;
 const ID_INFO: u32 = 1001;
 const ID_EXIT: u32 = 1002;
 /// 다이얼로그 컨트롤 ID. 닫기 버튼은 IDCANCEL(=2)로 둬 Esc 도 동일 처리되게 한다.
+/// 나머지 STATIC 들은 DPI 변경 시 `GetDlgItem` 으로 되찾아 재배치하기 위한 ID
+/// (SS_NOTIFY 없는 STATIC 은 WM_COMMAND 를 보내지 않으므로 명령 분기와 충돌 없음).
 const ID_LINK: u32 = 101;
 const ID_CLOSE: u32 = 2;
+const ID_HEADER_ICON: u32 = 102;
+const ID_TITLE: u32 = 103;
+const ID_VERSION: u32 = 104;
+const ID_LICENSE: u32 = 105;
+
+// ── 정보 다이얼로그 레이아웃(96-DPI 논리 px 단일 소스) ──────────────────────
+// 생성(show_info_dialog)과 DPI 재배치(apply_dialog_dpi)·외곽 재계산(WM_GETDPISCALEDSIZE)이
+// 모두 이 값을 공유한다 — 경로가 갈라져 드리프트하지 않게 하기 위함.
+/// 다이얼로그 창 스타일 / 확장 스타일.
+const DLG_STYLE: u32 = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+const DLG_EX: u32 = WS_EX_DLGMODALFRAME;
+/// 클라이언트 영역 논리 크기 (폭, 높이).
+const DLG_CLIENT_96: (i32, i32) = (440, 258);
+/// 자식 컨트롤 배치 `(ID, x, y, w, h)`. 유도 근거: 바깥 여백 18, 헤더 아이콘 48,
+/// 텍스트 시작 x = 18+48+14 = 80, 제목/버전 폭 = 440-80-18 = 342,
+/// 전체폭 라인 폭 = 440-2*18 = 404, 버튼 96x30 중앙 = (440-96)/2 = 172.
+const DLG_LAYOUT_96: [(u32, i32, i32, i32, i32); 6] = [
+    (ID_HEADER_ICON, 18, 20, 48, 48),
+    (ID_TITLE, 80, 22, 342, 30),
+    (ID_VERSION, 80, 56, 342, 22),
+    (ID_LICENSE, 18, 100, 404, 44),
+    (ID_LINK, 18, 158, 404, 22),
+    (ID_CLOSE, 172, 208, 96, 30),
+];
 
 // ── 컨트롤 스타일(ABI 안정 값) ───────────────────────────────────────────────
 // windows-sys 에서 SS_* 는 Win32_System_SystemServices 피처에 있어, 피처 추가를 피하려고
@@ -359,19 +390,16 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
     if dpi_x == 0 {
         dpi_x = 96;
     }
-    let scale = dpi_x as f32 / 96.0;
-    let s = |v: i32| (v as f32 * scale).round() as i32;
+    let s = |v: i32| crate::win32::scale_px(v, dpi_x);
 
     // 클라이언트(논리 px) → DPI 보정한 외곽 크기.
-    let win_style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
-    let win_ex = WS_EX_DLGMODALFRAME;
     let mut rc = RECT {
         left: 0,
         top: 0,
-        right: s(440),
-        bottom: s(258),
+        right: s(DLG_CLIENT_96.0),
+        bottom: s(DLG_CLIENT_96.1),
     };
-    AdjustWindowRectExForDpi(&mut rc, win_style, 0, win_ex, dpi_x);
+    AdjustWindowRectExForDpi(&mut rc, DLG_STYLE, 0, DLG_EX, dpi_x);
     let ww = rc.right - rc.left;
     let wh = rc.bottom - rc.top;
     let wx = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - ww) / 2;
@@ -380,10 +408,10 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
     let class_dlg = w!("CapsHangulInfoDialog");
     let title = wide(&format!("About {PROGRAM_NAME}"));
     let dlg = CreateWindowExW(
-        win_ex,
+        DLG_EX,
         class_dlg,
         title.as_ptr(),
-        win_style,
+        DLG_STYLE,
         wx,
         wy,
         ww,
@@ -397,37 +425,16 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
         return;
     }
 
-    // 폰트 3종(제목 굵게 / 본문 / 링크 밑줄). 닫을 때 해제.
-    // CreateFontW 인자: height(-px), width, escapement, orientation, weight, italic,
-    //   underline, strikeout, charset(1=DEFAULT), outprec, clipprec, quality(5=CLEARTYPE),
-    //   pitch&family, facename.
-    let f_title = CreateFontW(
-        -s(21), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 5, 0, w!("Segoe UI"),
-    );
-    let f_text = CreateFontW(
-        -s(15), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, w!("Segoe UI"),
-    );
-    let f_link = CreateFontW(
-        -s(15), 0, 0, 0, 400, 0, 1, 0, 1, 0, 0, 5, 0, w!("Segoe UI"),
-    );
-    DLG_FONT_TITLE.store(f_title, Ordering::SeqCst);
-    DLG_FONT_TEXT.store(f_text, Ordering::SeqCst);
-    DLG_FONT_LINK.store(f_link, Ordering::SeqCst);
-
-    // 헤더 아이콘(48 논리 px) + 타이틀바 아이콘(공유 리소스 → 해제 불필요).
-    let icon_px = s(48);
-    let header_icon =
-        LoadImageW(hinstance, 1 as *const u16, IMAGE_ICON, icon_px, icon_px, LR_DEFAULTCOLOR)
-            as HICON;
-    DLG_ICON.store(header_icon, Ordering::SeqCst);
+    // 타이틀바 아이콘(공유 리소스 → 해제 불필요).
     let title_icon = LoadIconW(hinstance, 1 as *const u16);
     if !title_icon.is_null() {
         SendMessageW(dlg, WM_SETICON, ICON_BIG as usize, title_icon as isize);
         SendMessageW(dlg, WM_SETICON, ICON_SMALL as usize, title_icon as isize);
     }
 
-    // 자식 컨트롤 생성 헬퍼(좌표/크기는 호출부에서 DPI 스케일된 값).
-    let mk = |class: &str, text: &str, extra: u32, x: i32, y: i32, w: i32, h: i32, id: u32| {
+    // 자식 컨트롤 생성 헬퍼. 위치/크기는 0 으로 두고 폰트/헤더 아이콘과 함께
+    // apply_dialog_dpi 가 일괄 적용한다(생성 경로와 DPI 변경 경로의 단일화).
+    let mk = |class: &str, text: &str, extra: u32, id: u32| {
         // SAFETY: 닫힌-환경 클로저는 unsafe 컨텍스트를 상속하지 않으므로 명시 블록.
         unsafe {
             CreateWindowExW(
@@ -435,10 +442,10 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
                 wide(class).as_ptr(),
                 wide(text).as_ptr(),
                 WS_CHILD | WS_VISIBLE | extra,
-                x,
-                y,
-                w,
-                h,
+                0,
+                0,
+                0,
+                0,
                 dlg,
                 id as usize as *mut c_void,
                 hinstance,
@@ -447,63 +454,88 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
         }
     };
 
-    let m = 18; // 바깥 여백
-    let icon_w = 48;
-    let text_x = m + icon_w + 14; // 아이콘 오른쪽 텍스트 시작 x
-    let body_w = 440 - text_x - m; // 제목/버전 폭
-    let inner_w = 440 - 2 * m; // 전체폭 라인 폭
-
-    // 헤더 아이콘.
-    let ic = mk("STATIC", "", SS_ICON, s(m), s(20), s(icon_w), s(icon_w), 0);
-    if !header_icon.is_null() {
-        SendMessageW(ic, STM_SETICON, header_icon as usize, 0);
-    }
-
-    // 제목 / 버전.
-    let title_ctl = mk("STATIC", PROGRAM_NAME, 0, s(text_x), s(22), s(body_w), s(30), 0);
-    let ver_ctl = mk(
-        "STATIC",
-        &format!("Version {VERSION}"),
-        0,
-        s(text_x),
-        s(56),
-        s(body_w),
-        s(22),
-        0,
-    );
-
+    mk("STATIC", "", SS_ICON, ID_HEADER_ICON); // 헤더 아이콘
+    mk("STATIC", PROGRAM_NAME, 0, ID_TITLE); // 제목
+    mk("STATIC", &format!("Version {VERSION}"), 0, ID_VERSION); // 버전
     // 라이선스 고지문(2줄).
-    let license = "MIT License\r\nCopyright © 2026 Hyojae Cho";
-    let lic_ctl = mk("STATIC", license, 0, s(m), s(100), s(inner_w), s(44), 0);
-
+    mk("STATIC", "MIT License\r\nCopyright © 2026 Hyojae Cho", 0, ID_LICENSE);
     // GitHub 저장소 하이퍼링크.
-    let link = mk("STATIC", REPO_URL, SS_NOTIFY, s(m), s(158), s(inner_w), s(22), ID_LINK);
+    let link = mk("STATIC", REPO_URL, SS_NOTIFY, ID_LINK);
     LINK_HWND.store(link, Ordering::SeqCst);
-
     // 닫기 버튼(기본 버튼 → Enter, IDCANCEL → Esc).
-    let btn_w = 96;
-    let btn = mk(
-        "BUTTON",
-        "Close",
-        BS_DEFPUSHBUTTON | WS_TABSTOP,
-        s((440 - btn_w) / 2),
-        s(208),
-        s(btn_w),
-        s(30),
-        ID_CLOSE,
-    );
+    let btn = mk("BUTTON", "Close", BS_DEFPUSHBUTTON | WS_TABSTOP, ID_CLOSE);
 
-    // 폰트 적용.
-    SendMessageW(title_ctl, WM_SETFONT, f_title as usize, 1);
-    SendMessageW(ver_ctl, WM_SETFONT, f_text as usize, 1);
-    SendMessageW(lic_ctl, WM_SETFONT, f_text as usize, 1);
-    SendMessageW(link, WM_SETFONT, f_link as usize, 1);
-    SendMessageW(btn, WM_SETFONT, f_text as usize, 1);
+    // DPI 종속 자원(폰트/헤더 아이콘) 생성 + 자식 배치.
+    apply_dialog_dpi(dlg, dpi_x);
 
     INFO_DLG.store(dlg, Ordering::SeqCst);
     ShowWindow(dlg, SW_SHOW);
     SetForegroundWindow(dlg);
     SetFocus(btn);
+}
+
+/// 다이얼로그의 DPI 종속 자원(폰트 3종·헤더 아이콘)과 자식 컨트롤 배치를 지정 DPI 로
+/// (재)적용한다. 생성 직후와 WM_DPICHANGED 가 공유하는 단일 경로.
+///
+/// 폰트/아이콘은 **새것을 컨트롤에 적용한 뒤 옛것을 파괴**한다 — 컨트롤이 파괴된
+/// 핸들을 참조하는 순간이 없도록. 전역(DLG_FONT_*/DLG_ICON)은 항상 최신 핸들을
+/// 담으므로 WM_NCDESTROY 의 해제 경로도 그대로 유효하다.
+unsafe fn apply_dialog_dpi(dlg: *mut c_void, dpi: u32) {
+    let s = |v: i32| crate::win32::scale_px(v, dpi);
+    let hinstance = GetModuleHandleW(ptr::null());
+
+    // 폰트 3종(제목 굵게 / 본문 / 링크 밑줄).
+    let f_title = crate::win32::create_ui_font(s(21), 700, false, w!("Segoe UI"));
+    let f_text = crate::win32::create_ui_font(s(15), 400, false, w!("Segoe UI"));
+    let f_link = crate::win32::create_ui_font(s(15), 400, true, w!("Segoe UI"));
+
+    // 헤더 아이콘(48 논리 px).
+    let icon_px = s(48);
+    let header_icon =
+        LoadImageW(hinstance, 1 as *const u16, IMAGE_ICON, icon_px, icon_px, LR_DEFAULTCOLOR)
+            as HICON;
+
+    // 자식 재배치 + 새 폰트/아이콘 적용.
+    for (id, x, y, w, h) in DLG_LAYOUT_96 {
+        let ctl = GetDlgItem(dlg, id as i32);
+        if ctl.is_null() {
+            continue;
+        }
+        MoveWindow(ctl, s(x), s(y), s(w), s(h), 1);
+        let font = match id {
+            ID_HEADER_ICON => {
+                if !header_icon.is_null() {
+                    SendMessageW(ctl, STM_SETICON, header_icon as usize, 0);
+                }
+                continue; // 아이콘 컨트롤은 폰트 불필요.
+            }
+            ID_TITLE => f_title,
+            ID_LINK => f_link,
+            _ => f_text,
+        };
+        SendMessageW(ctl, WM_SETFONT, font as usize, 1);
+    }
+
+    // 전역을 새 핸들로 교체하고, 더는 참조되지 않는 이전 핸들을 파괴.
+    // 아이콘은 로드가 실패(null)했으면 교체하지 않는다 — 컨트롤이 여전히 옛 아이콘을
+    // 표시 중이므로 파괴하면 안 되고, 옛 핸들은 WM_NCDESTROY 가 해제한다.
+    if !header_icon.is_null() {
+        let old_icon = DLG_ICON.swap(header_icon, Ordering::SeqCst);
+        if !old_icon.is_null() {
+            DestroyIcon(old_icon);
+        }
+    }
+    for (slot, new) in [
+        (&DLG_FONT_TITLE, f_title),
+        (&DLG_FONT_TEXT, f_text),
+        (&DLG_FONT_LINK, f_link),
+    ] {
+        let old = slot.swap(new, Ordering::SeqCst);
+        if !old.is_null() {
+            DeleteObject(old);
+        }
+    }
+    InvalidateRect(dlg, ptr::null(), 1);
 }
 
 /// 정보 다이얼로그 프로시저.
@@ -542,6 +574,45 @@ unsafe extern "system" fn dialog_wnd_proc(
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         },
+        WM_GETDPISCALEDSIZE => {
+            // DPI 변경 확정 전 OS 질의(wParam=새 DPI, lParam=*mut SIZE 입출력).
+            // 클라이언트 논리 크기(440x258)를 새 DPI 로 정확히 유지한 외곽 크기를 알려 줘,
+            // 뒤이어 오는 WM_DPICHANGED 의 제안 rect 가 우리 레이아웃과 픽셀 단위로
+            // 일치하게 한다(논클라이언트 비선형 스케일 오차 제거).
+            let new_dpi = wparam as u32;
+            let mut rc = RECT {
+                left: 0,
+                top: 0,
+                right: crate::win32::scale_px(DLG_CLIENT_96.0, new_dpi),
+                bottom: crate::win32::scale_px(DLG_CLIENT_96.1, new_dpi),
+            };
+            if AdjustWindowRectExForDpi(&mut rc, DLG_STYLE, 0, DLG_EX, new_dpi) == 0 {
+                return 0; // 실패 → OS 기본(선형 스케일)에 맡긴다. SIZE 미기록 시 1 반환 금지.
+            }
+            let size = lparam as *mut SIZE;
+            (*size).cx = rc.right - rc.left;
+            (*size).cy = rc.bottom - rc.top;
+            1
+        }
+        WM_DPICHANGED => {
+            // 모니터 간 이동 등으로 DPI 가 바뀜(wParam 하위 워드=새 DPI, lParam=제안 RECT).
+            // 제안 rect 는 **가공 없이 그대로** 적용한다 — 여기서 크기를 자체 재계산하면
+            // 모니터 경계에 걸친 창이 DPI 왕복 진동(핑퐁)에 빠질 수 있다. 크기 정밀도는
+            // WM_GETDPISCALEDSIZE 가 이미 보장한다.
+            let new_dpi = (wparam & 0xFFFF) as u32;
+            let rc = &*(lparam as *const RECT);
+            SetWindowPos(
+                hwnd,
+                ptr::null_mut(),
+                rc.left,
+                rc.top,
+                rc.right - rc.left,
+                rc.bottom - rc.top,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            apply_dialog_dpi(hwnd, new_dpi);
+            0
+        }
         WM_CLOSE => {
             DestroyWindow(hwnd);
             0

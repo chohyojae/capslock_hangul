@@ -23,7 +23,8 @@
 //! - 핵심 토글이 오버레이에 종속되지 않도록, 오버레이 미준비/커스텀 키일 때는
 //!   호출 측(훅)이 직접 키를 전송한다([`is_ready`]).
 //! - HiDPI: 프로세스를 Per-Monitor-V2 DPI aware 로 설정(`win32::set_dpi_aware`)하고,
-//!   모니터 DPI 에 맞춰 박스/폰트 크기를 스케일해 또렷하게 렌더링한다.
+//!   표시할 때마다 모니터 DPI 에 맞춰 박스/폰트 크기를 스케일(`win32::scale_px` /
+//!   `win32::create_ui_font`)해 또렷하게 렌더링한다(재표시 방식이라 WM_DPICHANGED 불필요).
 
 use core::ffi::c_void;
 use std::mem::size_of;
@@ -32,10 +33,10 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use windows_sys::Win32::Foundation::{COLORREF, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreateRoundRectRgn, CreateSolidBrush, DeleteObject, DrawTextW,
-    EndPaint, FillRect, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, MonitorFromWindow,
-    SelectObject, SetBkMode, SetTextColor, SetWindowRgn, DT_CENTER, DT_SINGLELINE, DT_VCENTER,
-    HFONT, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, TRANSPARENT,
+    BeginPaint, CreateRoundRectRgn, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
+    GetMonitorInfoW, InvalidateRect, MonitorFromPoint, MonitorFromWindow, SelectObject, SetBkMode,
+    SetTextColor, SetWindowRgn, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HFONT, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
@@ -48,7 +49,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
-use crate::{input, state};
+use crate::{input, state, win32};
 
 // ── 라벨 코드 (WM_APP_SHOW 의 wParam / show_label 인자) ─────────────────────
 const LBL_HANGUL: u32 = 1; // "한"
@@ -283,24 +284,18 @@ unsafe fn show_label(hwnd: *mut c_void, label: u32) {
     CURRENT_LABEL.store(label, Ordering::SeqCst);
 
     let (rc, dpi) = active_monitor(hwnd);
-    let scale = dpi as f32 / 96.0;
     let (bw, bh, brad, bfont, hangul_font) = metrics_96(label);
-    let w = (bw as f32 * scale).round() as i32;
-    let h = (bh as f32 * scale).round() as i32;
-    let rad = (brad as f32 * scale).round() as i32;
-    let font_px = (bfont as f32 * scale).round() as i32;
+    let w = win32::scale_px(bw, dpi);
+    let h = win32::scale_px(bh, dpi);
+    let rad = win32::scale_px(brad, dpi);
+    let font_px = win32::scale_px(bfont, dpi);
 
     let x = rc.left + ((rc.right - rc.left) - w) / 2;
     let y = rc.top + ((rc.bottom - rc.top) - h) / 2;
 
     // 폰트 (DPI 에 맞춰 새로 생성, 이전 폰트 해제). face 는 컴파일 타임 UTF-16(할당 없음).
     let face_w = if hangul_font { w!("Malgun Gothic") } else { w!("Segoe UI") };
-    // 인자: height(-px), width, escapement, orientation, weight(600=SemiBold),
-    //       italic, underline, strikeout, charset(1=DEFAULT),
-    //       outprec(0), clipprec(0), quality(5=CLEARTYPE), pitch&family(0), facename
-    let font: HFONT = CreateFontW(
-        -font_px, 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, face_w,
-    );
+    let font: HFONT = win32::create_ui_font(font_px, 600, false, face_w); // 600=SemiBold
     let old_font = OVERLAY_FONT.swap(font, Ordering::SeqCst);
     if !old_font.is_null() {
         DeleteObject(old_font);

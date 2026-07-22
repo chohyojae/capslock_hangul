@@ -4,6 +4,7 @@
 
 use std::ptr;
 
+use windows_sys::Win32::Graphics::Gdi::{CreateFontW, HFONT};
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
 use windows_sys::Win32::UI::HiDpi::{
@@ -30,6 +31,25 @@ pub fn set_dpi_aware() {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+}
+
+/// 96-DPI 논리 px 를 대상 DPI 의 물리 px 로 변환한다(가장 가까운 정수로 반올림).
+///
+/// overlay/tray 가 공유하는 스케일 함수. 반올림 방식(`f32::round`)을 바꾸면
+/// 기존 렌더링과 1px 어긋날 수 있으므로 유지한다.
+#[inline]
+pub fn scale_px(v_96: i32, dpi: u32) -> i32 {
+    (v_96 as f32 * (dpi as f32 / 96.0)).round() as i32
+}
+
+/// DPI 스케일된 UI 폰트를 만든다(overlay/tray 공용 관용구).
+///
+/// CreateFontW 인자: height(-px), width, escapement, orientation, weight, italic,
+///   underline, strikeout, charset(1=DEFAULT), outprec, clipprec, quality(5=CLEARTYPE),
+///   pitch&family, facename(널 종료 UTF-16, `w!` 리터럴 등 수명이 호출보다 긴 포인터).
+pub fn create_ui_font(px: i32, weight: i32, underline: bool, face: *const u16) -> HFONT {
+    // SAFETY: face 는 널 종료 UTF-16 포인터이며 CreateFontW 는 호출 중에만 읽는다.
+    unsafe { CreateFontW(-px, 0, 0, 0, weight, 0, underline as u32, 0, 1, 0, 0, 5, 0, face) }
 }
 
 /// 현재 프로세스의 작업 집합(working set)을 트림한다.

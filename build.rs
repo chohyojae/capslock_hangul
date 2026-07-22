@@ -49,10 +49,15 @@ fn main() {
     if profile != "release" {
         return;
     }
-    use embed_manifest::manifest::ExecutionLevel;
+    use embed_manifest::manifest::{DpiAwareness, ExecutionLevel};
     use embed_manifest::{embed_manifest, new_manifest};
     embed_manifest(
-        new_manifest("CapsHangul").requested_execution_level(ExecutionLevel::RequireAdministrator),
+        new_manifest("CapsHangul")
+            // embed-manifest 기본값이 이미 PerMonitorV2Only 지만, About 다이얼로그의
+            // WM_DPICHANGED 대응이 이 선언(런타임 set_dpi_aware 와 동일 수준)에
+            // 기대므로 기본값 의존 대신 명시한다.
+            .dpi_awareness(DpiAwareness::PerMonitorV2Only)
+            .requested_execution_level(ExecutionLevel::RequireAdministrator),
     )
     .expect("requireAdministrator manifest 임베드 실패");
 }
