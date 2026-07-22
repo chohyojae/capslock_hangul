@@ -1,6 +1,6 @@
 [package]
 name = "caps-hangul-reader"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "대상(포커스) 프로세스의 비트니스에 맞춰 TSF 리더 DLL 을 주입하는 per-arch 헬퍼(브로커)"
 license = "MIT"
