@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 이 저장소에서 작업할 때 따르는 규칙.
 
