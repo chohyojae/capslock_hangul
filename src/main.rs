@@ -14,6 +14,7 @@ mod overlay;
 mod single_instance;
 mod state;
 mod tray;
+mod update;
 mod win32;
 
 use config::Config;

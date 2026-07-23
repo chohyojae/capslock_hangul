@@ -36,6 +36,7 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_UI_HiDpi",              # Per-Monitor DPI 인식 + 모니터 DPI 조회
   "Win32_System_Memory",         # named shared memory (주입 DLL 과의 IPC 채널)
   "Win32_UI_Shell",              # 트레이 아이콘(Shell_NotifyIcon) + 브라우저 열기(ShellExecuteW)
+  "Win32_Networking_WinHttp",    # 업데이트 확인(HEAD 1회, 리다이렉트 Location 헤더만 읽음)
 ] }
 
 [build-dependencies]

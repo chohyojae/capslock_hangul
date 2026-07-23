@@ -5,6 +5,9 @@
 //! - **Info 클릭** 또는 **아이콘 더블클릭** → 정보 다이얼로그(프로그램 이름·버전·라이선스 고지문·
 //!   GitHub 저장소 하이퍼링크·닫기 버튼). 링크 클릭 시 시스템 기본 브라우저로 저장소를 연다.
 //! - **Exit 클릭** → 트레이 아이콘을 제거하고 메시지 루프를 종료(graceful shutdown)한다.
+//! - **업데이트 알림**: 시작 잠시 후 update.rs 가 GitHub 최신 릴리스를 1회 확인한다(lazy).
+//!   새 버전이 있으면 우클릭 메뉴 맨 위에 `Update available (vX.Y.Z)` 항목이 생기고,
+//!   About 다이얼로그 버전 줄 아래에 다운로드 링크가 표시된다(클릭 시 릴리스 페이지).
 //!
 //! ## 설계 요점
 //! - 트레이 콜백 메시지를 받을 **숨김 창**(`CapsHangulTrayWindow`)을 메인 스레드에 만든다.
@@ -47,9 +50,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
     DestroyWindow, GetCursorPos, GetDlgItem, GetSystemMetrics, KillTimer, LoadCursorW, LoadIconW,
     LoadImageW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SendMessageW, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
-    TrackPopupMenu, HICON, ICON_BIG, ICON_SMALL, IDC_ARROW, IDC_HAND, IMAGE_ICON, LR_DEFAULTCOLOR,
-    MF_STRING, SM_CXSMICON, SM_CYSMICON, STM_SETICON, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW,
+    SendMessageW, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos, SetWindowTextW,
+    ShowWindow, TrackPopupMenu, HICON, ICON_BIG, ICON_SMALL, IDC_ARROW, IDC_HAND, IMAGE_ICON,
+    LR_DEFAULTCOLOR, MF_SEPARATOR, MF_STRING, SM_CXSMICON, SM_CYSMICON, STM_SETICON,
+    SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW,
     SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND,
     WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_GETDPISCALEDSIZE, WM_LBUTTONDBLCLK,
     WM_NCDESTROY, WM_NULL, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT, WM_SETICON, WM_TIMER,
@@ -66,9 +70,14 @@ const TRAY_UID: u32 = 1;
 const TIMER_TRAY_RETRY: usize = 1;
 /// Explorer/알림 영역 준비를 기다리는 재시도 간격.
 const TRAY_RETRY_MS: u32 = 3_000;
+/// 업데이트 확인 시작 타이머 ID(1회성).
+const TIMER_UPDATE_CHECK: usize = 2;
+/// 시작 직후의 초기화 부하·로그온 시 네트워크 준비를 피해 확인을 잠시 늦춘다(lazy).
+const UPDATE_CHECK_DELAY_MS: u32 = 15_000;
 /// 컨텍스트 메뉴 명령 ID.
 const ID_INFO: u32 = 1001;
 const ID_EXIT: u32 = 1002;
+const ID_UPDATE: u32 = 1003;
 /// 다이얼로그 컨트롤 ID. 닫기 버튼은 IDCANCEL(=2)로 둬 Esc 도 동일 처리되게 한다.
 /// 나머지 STATIC 들은 DPI 변경 시 `GetDlgItem` 으로 되찾아 재배치하기 위한 ID
 /// (SS_NOTIFY 없는 STATIC 은 WM_COMMAND 를 보내지 않으므로 명령 분기와 충돌 없음).
@@ -78,6 +87,7 @@ const ID_HEADER_ICON: u32 = 102;
 const ID_TITLE: u32 = 103;
 const ID_VERSION: u32 = 104;
 const ID_LICENSE: u32 = 105;
+const ID_UPDATE_LINK: u32 = 106;
 
 // ── 정보 다이얼로그 레이아웃(96-DPI 논리 px 단일 소스) ──────────────────────
 // 생성(show_info_dialog)과 DPI 재배치(apply_dialog_dpi)·외곽 재계산(WM_GETDPISCALEDSIZE)이
@@ -90,10 +100,13 @@ const DLG_CLIENT_96: (i32, i32) = (440, 258);
 /// 자식 컨트롤 배치 `(ID, x, y, w, h)`. 유도 근거: 바깥 여백 18, 헤더 아이콘 48,
 /// 텍스트 시작 x = 18+48+14 = 80, 제목/버전 폭 = 440-80-18 = 342,
 /// 전체폭 라인 폭 = 440-2*18 = 404, 버튼 96x30 중앙 = (440-96)/2 = 172.
-const DLG_LAYOUT_96: [(u32, i32, i32, i32, i32); 6] = [
+/// 업데이트 링크는 버전 줄 바로 아래(y = 56+22 = 78)의 기존 여백을 차지한다 —
+/// 새 버전이 없으면 빈 텍스트라 보이지 않고, 레이아웃/창 크기는 상태와 무관하게 동일하다.
+const DLG_LAYOUT_96: [(u32, i32, i32, i32, i32); 7] = [
     (ID_HEADER_ICON, 18, 20, 48, 48),
     (ID_TITLE, 80, 22, 342, 30),
     (ID_VERSION, 80, 56, 342, 22),
+    (ID_UPDATE_LINK, 80, 78, 342, 22),
     (ID_LICENSE, 18, 100, 404, 44),
     (ID_LINK, 18, 158, 404, 22),
     (ID_CLOSE, 172, 208, 96, 30),
@@ -121,6 +134,8 @@ static TASKBAR_CREATED_MSG: AtomicU32 = AtomicU32::new(0);
 static INFO_DLG: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 /// 다이얼로그 안 GitHub 링크(STATIC) 핸들. WM_CTLCOLORSTATIC/WM_SETCURSOR 비교용.
 static LINK_HWND: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+/// 다이얼로그 안 업데이트 알림 링크(STATIC) 핸들. 위와 동일 용도 + 완료 통지 시 텍스트 갱신.
+static UPDATE_LINK_HWND: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 /// 다이얼로그 폰트/아이콘(닫을 때 WM_NCDESTROY 에서 해제).
 static DLG_FONT_TITLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static DLG_FONT_TEXT: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -228,6 +243,9 @@ pub fn init() -> Result<(), u32> {
         TRAY_ICON.store(hicon, Ordering::SeqCst);
 
         retry_add_tray_icon(hwnd);
+
+        // 업데이트 lazy 확인 예약(1회성). 타이머는 발화 전까지 메모리/CPU 를 쓰지 않는다.
+        SetTimer(hwnd, TIMER_UPDATE_CHECK, UPDATE_CHECK_DELAY_MS, None);
     }
     Ok(())
 }
@@ -328,7 +346,34 @@ unsafe extern "system" fn tray_wnd_proc(
             retry_add_tray_icon(hwnd);
             0
         }
+        WM_TIMER if wparam == TIMER_UPDATE_CHECK => {
+            KillTimer(hwnd, TIMER_UPDATE_CHECK); // 1회성 — 확인 스레드를 띄우고 끝.
+            crate::update::spawn_check(hwnd);
+            0
+        }
+        crate::update::WM_UPDATE_CHECKED => {
+            // 확인 스레드 완료 통지. 새 버전이 발견됐고 About 이 이미 열려 있으면
+            // (드문 경합) 빈 업데이트 링크에 텍스트를 채워 넣는다.
+            if wparam == 1 {
+                let dlg = INFO_DLG.load(Ordering::SeqCst);
+                if !dlg.is_null() {
+                    let text = wide(&update_link_text());
+                    SetWindowTextW(GetDlgItem(dlg, ID_UPDATE_LINK as i32), text.as_ptr());
+                }
+            }
+            // WinHTTP/스레드 초기화로 작업 집합에 올라온 1회성 페이지를 idle 복귀 전에 비운다.
+            crate::win32::trim_working_set();
+            0
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+/// About 다이얼로그의 업데이트 알림 링크 텍스트(새 버전 없으면 빈 문자열 → 비표시).
+fn update_link_text() -> String {
+    match crate::update::available_version() {
+        Some(v) => format!("Update available: {v} — download page"),
+        None => String::new(),
     }
 }
 
@@ -337,6 +382,13 @@ unsafe fn show_context_menu(hwnd: *mut c_void) {
     let menu = CreatePopupMenu();
     if menu.is_null() {
         return;
+    }
+    // 새 버전이 확인됐으면 맨 위에 다운로드 바로가기(&U 니모닉)를 넣는다.
+    // (AppendMenuW 는 문자열을 복사하므로 지역 버퍼로 충분하다.)
+    if let Some(v) = crate::update::available_version() {
+        let label = wide(&format!("&Update available ({v})"));
+        AppendMenuW(menu, MF_STRING, ID_UPDATE as usize, label.as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
     }
     // `&` 니모닉 → 단축키 I / X. 표시 텍스트는 "Info" / "Exit".
     AppendMenuW(menu, MF_STRING, ID_INFO as usize, w!("&Info"));
@@ -360,6 +412,7 @@ unsafe fn show_context_menu(hwnd: *mut c_void) {
     DestroyMenu(menu);
 
     match cmd as u32 {
+        ID_UPDATE => open_url(crate::update::LATEST_RELEASE_URL),
         ID_INFO => show_info_dialog(hwnd),
         ID_EXIT => {
             DestroyWindow(hwnd); // → WM_DESTROY → shutdown + PostQuitMessage.
@@ -457,6 +510,9 @@ unsafe fn show_info_dialog(owner: *mut c_void) {
     mk("STATIC", "", SS_ICON, ID_HEADER_ICON); // 헤더 아이콘
     mk("STATIC", PROGRAM_NAME, 0, ID_TITLE); // 제목
     mk("STATIC", &format!("Version {VERSION}"), 0, ID_VERSION); // 버전
+    // 업데이트 알림 링크(새 버전 있을 때만 텍스트 표시 — 없으면 빈 STATIC 이라 보이지 않음).
+    let upd = mk("STATIC", &update_link_text(), SS_NOTIFY, ID_UPDATE_LINK);
+    UPDATE_LINK_HWND.store(upd, Ordering::SeqCst);
     // 라이선스 고지문(2줄).
     mk("STATIC", "MIT License\r\nCopyright © 2026 Hyojae Cho", 0, ID_LICENSE);
     // GitHub 저장소 하이퍼링크.
@@ -510,7 +566,7 @@ unsafe fn apply_dialog_dpi(dlg: *mut c_void, dpi: u32) {
                 continue; // 아이콘 컨트롤은 폰트 불필요.
             }
             ID_TITLE => f_title,
-            ID_LINK => f_link,
+            ID_LINK | ID_UPDATE_LINK => f_link,
             _ => f_text,
         };
         SendMessageW(ctl, WM_SETFONT, font as usize, 1);
@@ -547,17 +603,25 @@ unsafe extern "system" fn dialog_wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_CTLCOLORSTATIC => {
-            // 흰 배경 위 텍스트; 링크는 파란 글자색.
+            // 흰 배경 위 텍스트; 링크(저장소/업데이트)는 파란 글자색.
             let hdc = wparam as *mut c_void;
+            let ctl = lparam as *mut c_void;
             SetBkMode(hdc, TRANSPARENT as i32);
-            if (lparam as *mut c_void) == LINK_HWND.load(Ordering::SeqCst) {
+            if ctl == LINK_HWND.load(Ordering::SeqCst)
+                || ctl == UPDATE_LINK_HWND.load(Ordering::SeqCst)
+            {
                 SetTextColor(hdc, rgb(0, 102, 204));
             }
             GetSysColorBrush(COLOR_WINDOW) as LRESULT
         }
         WM_SETCURSOR => {
-            // 링크 위에서는 손 모양 커서.
-            if (wparam as *mut c_void) == LINK_HWND.load(Ordering::SeqCst) {
+            // 링크 위에서는 손 모양 커서. 업데이트 링크는 텍스트가 있을 때(새 버전
+            // 발견)만 — 빈 STATIC 은 보이지 않으므로 손 커서가 나오면 안 된다.
+            let ctl = wparam as *mut c_void;
+            let is_link = ctl == LINK_HWND.load(Ordering::SeqCst)
+                || (ctl == UPDATE_LINK_HWND.load(Ordering::SeqCst)
+                    && crate::update::available_version().is_some());
+            if is_link {
                 SetCursor(LoadCursorW(ptr::null_mut(), IDC_HAND));
                 return 1;
             }
@@ -566,6 +630,13 @@ unsafe extern "system" fn dialog_wnd_proc(
         WM_COMMAND => match (wparam & 0xFFFF) as u32 {
             ID_LINK => {
                 open_url(REPO_URL);
+                0
+            }
+            ID_UPDATE_LINK => {
+                // 빈(비표시) STATIC 도 클릭 이벤트는 보내므로 새 버전이 있을 때만 연다.
+                if crate::update::available_version().is_some() {
+                    open_url(crate::update::LATEST_RELEASE_URL);
+                }
                 0
             }
             ID_CLOSE => {
@@ -621,6 +692,7 @@ unsafe extern "system" fn dialog_wnd_proc(
             // 전역 초기화 + GDI 자원 해제.
             INFO_DLG.store(ptr::null_mut(), Ordering::SeqCst);
             LINK_HWND.store(ptr::null_mut(), Ordering::SeqCst);
+            UPDATE_LINK_HWND.store(ptr::null_mut(), Ordering::SeqCst);
             let icon = DLG_ICON.swap(ptr::null_mut(), Ordering::SeqCst);
             if !icon.is_null() {
                 DestroyIcon(icon);
