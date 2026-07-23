@@ -1,6 +1,6 @@
 [package]
 name = "caps-hangul-tsf"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "포커스 스레드에 주입돼 in-process 로 IME 한/영 변환 모드를 읽는 TSF 리더 DLL"
 license = "MIT"
